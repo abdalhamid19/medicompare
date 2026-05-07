@@ -192,17 +192,102 @@ medicompare/
 
 **`best_match(drug_name) -> tuple[dict|None, float, str]`**
 
-إيجاد أفضل تطابق باستراتيجيتين:
+إيجاد أفضل تطابق للدواء باستخدام استراتيجيتين:
 
-**الاستراتيجية 1: Brand Index** (الأسرع - O(1)):
-- بحث بالعلامة التجارية
-- اختيار أفضل نتيجة بـ `token_sort_ratio`
-- رفض إذا كانت النسبة أقل من `fuzzy_threshold`
+#### الاستراتيجية 1: Brand Index (الأسرع - O(1))
 
-**الاستراتيجية 2: Fuzzy Matching** (أبطأ - O(n)):
-- تجربة 3 scorers: `token_set_ratio`, `token_sort_ratio`, `partial_token_sort_ratio`
-- تصفية كل نتيجة بـ `components_match`
-- اختيار أعلى نسبة
+البحث السريع بالعلامة التجارية:
+
+1. **استخراج بادئات العلامة التجارية**:
+   - للدواء `PANADOL 500 MG` → استخرج العلامة = `PANADOL`
+   - ابحث عن المنتجات في الفهرس التي تبدأ بـ `PAN`, `PANA`, `PANAD`, `PANADO`, `PANADOL`
+
+2. **تقييم الخيارات**:
+   - المنتجات المجدة: `PANADOL 500 MG 20 TAB`, `PANADOL 500 MG 30 TAB`
+   - اختر أفضل واحد باستخدام `token_sort_ratio`
+   - **التقييم**: `PANADOL 500 MG 30 TAB` ضد `PANADOL 500 MG 20 TAB` → النسبة أعلى = أفضل
+
+3. **التحقق النهائي**:
+   - إذا النسبة < `fuzzy_threshold` (80%) → **رفض**
+   - وإلا → **قبول وإرجاع النتيجة**
+
+**مثال عملي**:
+```
+Input:  PANADOL 500 MG 30 TABLET
+        │
+        └─> استخرج: brand="PANADOL", dosage="500", unit="MG", qty="30"
+            │
+            └─> ابحث في الفهرس بـ بادئات: [PAN, PANA, PANAD, PANADO, PANADOL]
+                │
+                └─> وجدنا: PANADOL 500 MG 30 TAB (في المخزن)
+                    │
+                    └─> score = 95% ✅ (أكبر من 80%)
+                        │
+                        └─> قبول! المطابقة صحيحة
+
+Output: (record="PANADOL 500 MG 30 TAB", score=95, method="brand_index")
+```
+
+---
+
+#### الاستراتيجية 2: Fuzzy Matching (الأدق - O(n))
+
+إذا لم تجد الاستراتيجية 1 تطابقاً، تحاول البحث الشامل بـ 3 طرق مختلفة:
+
+**الـ 3 Scorers:**
+
+1. **`token_set_ratio`** — يقارن كل الكلمات بغض النظر عن الترتيب:
+   - مثال: `PANADOL 30 TAB 500 MG` = `PANADOL 500 MG 30 TAB` ✅
+   - الترتيب لا يهم!
+
+2. **`token_sort_ratio`** — يرتب الكلمات ثم يقارن:
+   - مثال: `PANADOL 30 500 MG TAB` ← يصير `30 PANADOL 500 MG TAB`
+   - يقارن مع `30 PANADOL 500 MG TAB` ✅
+
+3. **`partial_token_sort_ratio`** — يبحث عن أطول قطعة متطابقة:
+   - مثال: `PANADOL 500 MG PLUS 30 TAB` ضد `PANADOL 500 MG 30 TAB`
+   - يجد `PANADOL 500 MG 30 TAB` كقطعة متطابقة = نسبة عالية ✅
+
+**خطوات البحث**:
+```
+Input: PANADOL PLUS 500 MG 30 TABLET
+       │
+       └─> حاول كل scorer:
+           │
+           ├─ token_set_ratio:         احسب النسبة = 92%
+           ├─ token_sort_ratio:        احسب النسبة = 88%
+           └─ partial_token_sort_ratio: احسب النسبة = 90%
+               │
+               └─> أفضل نسبة = 92% (من token_set_ratio)
+                   │
+                   └─> تحقق من المكونات:
+                       - العلامة: PANADOL ✅
+                       - الجرعة: 500 MG ✅
+                       - الكمية: 30 ✅
+                       │
+                       └─> كل شيء متطابق!
+
+Output: (record=PANADOL 500 MG 30 TAB, score=92, method="token_set_ratio")
+```
+
+---
+
+#### متى تُستخدم كل استراتيجية؟
+
+| الحالة | الاستراتيجية | مثال |
+|---|---|---|
+| اسم عادي واضح | Strategy 1 | `PANADOL 500 MG 30 TAB` → يجد نسخة متطابقة تقريباً |
+| ترتيب مختلف | Strategy 2 | `30 TAB PANADOL 500 MG` → يعيد ترتيب ويطابق |
+| كلمة إضافية | Strategy 2 | `PANADOL PLUS 500 MG 30 TAB` → يتجاهل `PLUS` ويجد التطابق |
+| اسم غير موجود | None | `UNKNOWN DRUG` → لا يجد شيء → `no_match` |
+
+---
+
+#### ملاحظات مهمة:
+
+- **السرعة**: Brand Index أسرع (O(1)) لأنها تبحث في فهرس مسبق، بينما Fuzzy تبحث في كل الأسماء (O(n))
+- **الدقة**: Fuzzy Matching أدق لأنها تجرب 3 طرق مختلفة
+- **التوازن**: النظام يستخدم Brand Index أولاً (سريع)، وإذا فشل يستخدم Fuzzy (دقيق)
 
 ---
 
