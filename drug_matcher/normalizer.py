@@ -26,8 +26,8 @@ FORM_PREFIXES = frozenset({
     "INHALER", "INH",
 })
 
-NOISE_WORDS = frozenset({"IMP", "IMPORTED", "BLUE", "RED", "WHITE"})
-CRITICAL_MODIFIERS = frozenset({"PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD", "SINUS"})
+NOISE_WORDS = frozenset({"BLUE", "RED", "WHITE"})
+CRITICAL_MODIFIERS = frozenset({"PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD", "SINUS", "IMP", "IMPORTED"})
 
 @dataclass(slots=True)
 class DrugComponents:
@@ -45,16 +45,12 @@ _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(r"(\d+)\s*(TAB|TABS|CAP|CAPS|SACHET|SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|PACKETS)\b", re.IGNORECASE)
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
 _NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*")
-_IMPORT_PREFIX_RE = re.compile(r"^[+*.\s]*(?:IMP|IMPORTED)\b\s*", re.IGNORECASE)
-_IMP_RE = re.compile(r"\bIMP\b\s*", re.IGNORECASE)
 
 def normalize(name: str) -> str:
     if not name or not isinstance(name, str):
         return ""
     name = name.strip().upper()
-    name = _IMPORT_PREFIX_RE.sub("", name)
     name = _NOISE_PREFIX_RE.sub("", name)
-    name = _IMP_RE.sub("", name)
     name = re.sub(r"-+", " ", name)
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
