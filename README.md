@@ -1,4 +1,4 @@
-# MediCompare2 - Drug Matching & Verification Pipeline
+# MediCompare - Drug Matching & Verification Pipeline
 
 ## نظرة عامة
 
@@ -23,12 +23,12 @@
 ## هيكل المشروع
 
 ```
-medicompare2/
+medicompare/
 ├── all_non_cosmotics_drug_all.csv    # بيانات الأدوية (code, drug_name)
 ├── tawreed_products.csv              # بيانات التوريد (product_name_ar, product_name_en, store_product_id)
 ├── matched_drugs_verified.csv        # النتيجة النهائية
 ├── run_matcher.py                    # نقطة دخول - مطابقة خوارزمية فقط
-├── run_ai_verify.py                  # نقطة دخول - المطابقة + التحقق بالـ AI
+├── run_ai_verify.py                    # نقطة دخول - المطابقة + التحقق بالـ AI
 └── drug_matcher/                     # الحزمة الأساسية
     ├── __init__.py                   # تعريف الحزمة
     ├── config.py                     # الإعدادات المركزية
