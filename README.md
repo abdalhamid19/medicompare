@@ -24,18 +24,40 @@
 
 ```
 medicompare/
-├── all_non_cosmotics_drug_all.csv    # بيانات الأدوية (code, drug_name)
-├── tawreed_products.csv              # بيانات التوريد (product_name_ar, product_name_en, store_product_id)
-├── matched_drugs_verified.csv        # النتيجة النهائية
+├── README.md                         # التوثيق الشامل
+├── pytest.ini                        # إعدادات pytest
 ├── run_matcher.py                    # نقطة دخول - مطابقة خوارزمية فقط
-├── run_ai_verify.py                    # نقطة دخول - المطابقة + التحقق بالـ AI
-└── drug_matcher/                     # الحزمة الأساسية
-    ├── __init__.py                   # تعريف الحزمة
-    ├── config.py                     # الإعدادات المركزية
-    ├── normalizer.py                 # تطبيع وتحليل أسماء الأدوية
-    ├── indexer.py                    # فهرس مقلوب + مطابقة fuzzy
-    ├── verifier.py                   # تحقق AI عبر OpenRouter API
-    └── pipeline.py                   # منسق الـ pipeline الكامل
+├── run_ai_verify.py                  # نقطة دخول - المطابقة + التحقق بالـ AI
+├── run_tests.py                      # تشغيل الاختبارات
+│
+├── input/                            # مجلد البيانات المدخلة
+│   ├── all_non_cosmotics_drug_all.csv    # بيانات الأدوية (code, drug_name)
+│   └── tawreed_products.csv              # بيانات التوريد (product_name_ar, product_name_en, store_product_id)
+│
+├── output/                           # مجلد النتائج
+│   ├── matched_drugs.csv                 # نتائج المطابقة الأولية
+│   └── matched_drugs_verified.csv        # النتيجة النهائية المتحقق منها
+│
+├── drug_matcher/                     # الحزمة الأساسية
+│   ├── __init__.py                   # تعريف الحزمة
+│   ├── config.py                     # الإعدادات المركزية
+│   ├── normalizer.py                 # تطبيع وتحليل أسماء الأدوية
+│   ├── indexer.py                    # فهرس مقلوب + مطابقة fuzzy
+│   ├── verifier.py                   # تحقق AI عبر OpenRouter API
+│   └── pipeline.py                   # منسق الـ pipeline الكامل
+│
+├── tests/                            # مجلد الاختبارات
+│   ├── conftest.py                   # تكوين pytest
+│   ├── test_indexer.py               # اختبارات الفهرسة والمطابقة
+│   ├── test_normalizer.py            # اختبارات التطبيع
+│   ├── test_pipeline.py              # اختبارات الـ pipeline
+│   └── test_verifier.py              # اختبارات التحقق بالـ AI
+│
+└── docs/                             # التوثيق الإضافي
+    ├── PLAN.md                       # خطة تحقيق دقة 100%
+    ├── PROJECT_RULES.md              # قواعد المشروع
+    ├── MATCHING_STRATEGY_REVIEW.md   # مراجعة استراتيجية المطابقة
+    └── REFACTORY_GUIDE.md            # دليل إعادة الهيكلة
 ```
 
 ---
@@ -56,17 +78,17 @@ medicompare/
 - `top_k_candidates: int = 10` — عدد المرشحين من fuzzy search
 
 **APIConfig** - إعدادات الـ API:
-- `api_key: str` — مفتاح OpenRouter API
-- `base_url: str = "https://openrouter.ai/api/v1"` — رابط الـ API
-- `model: str = "~google/gemini-flash-latest"` — نموذج AI (أرخص وأسرع)
+- `api_key: str` — مفتاح OpenRouter API (من متغير البيئة `AGENT_ROUTER_API_KEY`)
+- `base_url: str = "https://openrouter.ai/api/v1"` — رابط الـ API (من متغير البيئة `AGENT_ROUTER_BASE_URL`)
+- `model: str = "glm-5.1"` — نموذج AI الافتراضي (من متغير البيئة `AGENT_ROUTER_MODEL`)
 - `max_tokens: int = 1024` — أقصى tokens للاستجابة
 - `temperature: float = 0.1` — حرارة الـ model (منخفضة = نتائج ثابتة)
 
 **Paths** - مسارات الملفات:
-- `drugs_csv` — ملف الأدوية
-- `tawreed_csv` — ملف التوريد
-- `output_csv` — ملف النتائج
-- `env_file` — ملف البيئة
+- `drugs_csv: Path = BASE_DIR / "input/all_non_cosmotics_drug_all.csv"` — ملف الأدوية
+- `tawreed_csv: Path = BASE_DIR / "input/tawreed_products.csv"` — ملف التوريد
+- `output_csv: Path = BASE_DIR / "output/matched_drugs_verified.csv"` — ملف النتائج
+- `env_file: Path = BASE_DIR / ".env"` — ملف البيئة
 
 ---
 
@@ -302,7 +324,21 @@ pipeline.print_stats()
 
 ### المتطلبات
 ```bash
-pip install pandas numpy rapidfuzz aiohttp
+pip install pandas numpy rapidfuzz aiohttp requests
+```
+
+متغيرات البيئة المطلوبة (في ملف `.env` أو متغيرات النظام):
+```
+AGENT_ROUTER_API_KEY=your-api-key
+AGENT_ROUTER_BASE_URL=https://openrouter.ai/api/v1
+AGENT_ROUTER_MODEL=glm-5.1
+```
+
+### تشغيل الاختبارات
+```bash
+python run_tests.py
+# أو
+pytest
 ```
 
 ### تشغيل المطابقة فقط (بدون AI)
@@ -310,10 +346,14 @@ pip install pandas numpy rapidfuzz aiohttp
 python run_matcher.py
 ```
 
+**الإخراج:** `output/matched_drugs.csv`
+
 ### تشغيل المطابقة + التحقق بالـ AI
 ```bash
 python run_ai_verify.py
 ```
+
+**الإخراج:** `output/matched_drugs_verified.csv`
 
 ### أو من كود Python
 ```python
@@ -321,16 +361,22 @@ import asyncio
 from drug_matcher.config import MatchingConfig, APIConfig
 from drug_matcher.pipeline import MatchPipeline
 
+# تحميل متغيرات البيئة
+from drug_matcher.config import load_env
+load_env()
+
 cfg = MatchingConfig(fuzzy_threshold=80, ai_verify_threshold=90.0)
-api_cfg = APIConfig(api_key="your-openrouter-key")
+api_cfg = APIConfig()  # سيتم قراءة المتغيرات من البيئة
 
 pipeline = MatchPipeline(cfg=cfg, api_cfg=api_cfg)
 result = asyncio.run(pipeline.run_full())
+
+# النتائج ستُحفظ في output/matched_drugs_verified.csv
 ```
 
 ---
 
-## ملف الإخراج `matched_drugs_verified.csv`
+## ملف الإخراج `output/matched_drugs_verified.csv`
 
 | العمود | الوصف |
 |---|---|
@@ -421,7 +467,7 @@ result = asyncio.run(pipeline.run_full())
 
 ## الملاحظات المعروفة
 
-1. **نموذج AI متساهل**: gemini-flash يؤكد تطابقات خاطئة (كمية/جرعة مختلفة) — يُعالج بـ `run_post_cleanup`
+1. **نموذج AI المستخدم**: glm-5.1 من OpenRouter — يوفر توازن جيد بين الدقة والسرعة والتكلفة
 2. **المرحلة 3 (بحث AI)**: لم تجد مطابقات جديدة حتى الآن — معظم الأصناف غير المطابقة ببساطة غير موجودة في التوريد
-3. **أسماء الأدوية غير الإنجليزية**: لا يتم التعامل مع الأسماء العربية في المطابقة
-4. **التحقق اليدوي**: ~25 تطابق مشبوه قد يحتاج مراجعة يدوية (كميات مختلفة أو علامات تجارية مشابهة جداً)
+3. **أسماء الأدوية غير الإنجليزية**: لا يتم التعامل مع الأسماء العربية في المطابقة بشكل مباشر
+4. **التحقق اليدوي**: بعض التطابقات قد تحتاج مراجعة يدوية (كميات مختلفة أو علامات تجارية مشابهة جداً)
