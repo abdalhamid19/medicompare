@@ -1,0 +1,66 @@
+from __future__ import annotations
+
+import unittest
+
+from drug_matcher.normalizer import components_match, normalize, parse_drug
+
+
+class NormalizerTests(unittest.TestCase):
+    def test_normalize_handles_noise_compact_tokens_and_decimals(self) -> None:
+        cases = [
+            ("+***IMP PANADOL20MG 30TAB", "PANADOL 20 MG 30 TAB"),
+            ("+***imp PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TAB"),
+            ("INDERAL 10MG 50TAB", "INDERAL 10 MG 50 TAB"),
+            ("OMEPRAZOLE 21-CAP", "OMEPRAZOLE 21 CAP"),
+            ("GYNOCONAZOLE 0.8% CREAM", "GYNOCONAZOLE 0.8% CREAM"),
+            ("VITAMIN D 1.000IU", "VITAMIN D 1000 IU"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize(raw), expected)
+
+    def test_parse_drug_extracts_core_components(self) -> None:
+        comp = parse_drug("+***IMP AUGMENTIN625MG 10TABS")
+
+        self.assertEqual(comp.brand, "AUGMENTIN")
+        self.assertEqual(comp.dosage_nums, ("625",))
+        self.assertEqual(comp.dosage_units, ("MG",))
+        self.assertEqual(comp.qty, "10")
+        self.assertEqual(comp.normalized, "AUGMENTIN 625 MG 10 TABS")
+
+    def test_parse_drug_separates_packaging_weight_from_dosage(self) -> None:
+        comp = parse_drug("PRODUCT 500 MG 30 TAB 20 GM")
+
+        self.assertEqual(comp.dosage_nums, ("500",))
+        self.assertEqual(comp.dosage_units, ("MG",))
+        self.assertEqual(comp.qty, "30")
+        self.assertEqual(comp.weight, "20")
+
+    def test_components_match_rejects_unsafe_matches(self) -> None:
+        cases = [
+            ("VIGOTON PLUS 20 TABS", "VIGOTON 30 TABS", "different_modifier"),
+            ("GYNOCONAZOLE 0.8%", "GYNOCONAZOL 0.4%", "different_dosage"),
+            ("CLOZAPINE 100 MG 30 TABS", "CLOZAPEX 100 MG 50 TAB", "different_brand"),
+            ("TOTAL COD LIVER OIL 120 ML SYP", "TOTAL SYRUP 120 ML", "different_brand"),
+        ]
+        for left, right, reason in cases:
+            with self.subTest(left=left, right=right):
+                is_ok, actual_reason = components_match(parse_drug(left), parse_drug(right))
+                self.assertFalse(is_ok)
+                self.assertEqual(actual_reason, reason)
+
+    def test_components_match_accepts_equivalent_formatting(self) -> None:
+        cases = [
+            ("AUGMENTIN 625MG 10 TABS", "AUGMENTIN 625 MG 10 F.C. TAB."),
+            ("INDERAL 10 MG 50TAB", "INDERAL 10 MG 50 TABS"),
+            ("PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TABLETS"),
+        ]
+        for left, right in cases:
+            with self.subTest(left=left, right=right):
+                is_ok, reason = components_match(parse_drug(left), parse_drug(right))
+                self.assertTrue(is_ok)
+                self.assertEqual(reason, "ok")
+
+
+if __name__ == "__main__":
+    unittest.main()
