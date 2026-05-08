@@ -139,13 +139,16 @@ async def _apply_verification(
             results.at[idx, "verified"] = "ai_confirmed"
             results.at[idx, "match_method"] = "ai_verified"
             if trace and trace.enabled:
+                ai_reason = vr.get("reason", "")
+                if vr.get("api_failed"):
+                    ai_reason = f"API unavailable ({ai_reason}), kept algo match"
                 trace.log_ai_verify_result(
                     results.at[idx, "code"], drug_name,
                     parsed.normalized, parsed.brand,
                     True, "ai_confirmed",
                     "AI confirmed the algorithmic match",
                     results.at[idx, "matched_product_name_en"],
-                    vr.get("confidence"), vr.get("reason", ""),
+                    vr.get("confidence"), ai_reason,
                     "",
                 )
     return rejected, corrected

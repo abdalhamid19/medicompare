@@ -36,6 +36,48 @@ DRUG B (from tawreed): {drug_b}
 Is this the SAME product? Respond in JSON only."""
 
 
+def _extract_json(text: str) -> dict | None:
+    """Extract JSON from model response, handling markdown code blocks."""
+    # Try direct parse
+    try:
+        return json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Try extracting from ```json ... ``` block
+    m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(1))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    # Try finding first { ... } in text
+    m = re.search(r"\{[^{}]*\}", text, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def _infer_is_correct(text: str) -> bool:
+    """Infer match correctness from text when JSON parsing fails."""
+    lower = text.lower()
+    # Strong reject signals
+    for word in ["different brand", "not the same", "mismatch", "incorrect",
+                 "wrong match", "different product", "different dosage",
+                 "different form", "different quantity"]:
+        if word in lower:
+            return False
+    # Strong accept signals
+    for word in ["same product", "correct match", "identical", "is_correct",
+                 "matching", "same brand", "same dosage"]:
+        if word in lower:
+            return True
+    # Default: reject (safer for drug matching)
+    return False
+
+
 class AIVerifier:
     """Async AI verification client with rate limiting and batching."""
 
@@ -87,11 +129,19 @@ class AIVerifier:
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
-                        return {"is_correct": True, "reason": f"api_error_{resp.status}", "confidence": 0.0}
+                        return {"is_correct": True, "reason": f"api_error_{resp.status}", "confidence": 0.0, "api_failed": True}
                     data = await resp.json()
                     content = data["choices"][0]["message"]["content"]
-                    # Parse JSON response
-                    result = json.loads(content)
+                    # Parse JSON response (with fallback for non-JSON)
+                    result = _extract_json(content)
+                    if result is None:
+                        # Model didn't return valid JSON, infer from text
+                        is_correct = _infer_is_correct(content)
+                        return {
+                            "is_correct": is_correct,
+                            "reason": content[:200],
+                            "confidence": 0.5,
+                        }
                     return {
                         "is_correct": bool(result.get("is_correct", False)),
                         "reason": str(result.get("reason", "")),
@@ -156,7 +206,9 @@ If NONE are correct, set best_index to 0."""
                         return None
                     data = await resp.json()
                     content = data["choices"][0]["message"]["content"]
-                    result = json.loads(content)
+                    result = _extract_json(content)
+                    if result is None:
+                        return None
                     best_idx = int(result.get("best_index", 0))
                     if best_idx > 0 and best_idx <= len(candidates):
                         return {
