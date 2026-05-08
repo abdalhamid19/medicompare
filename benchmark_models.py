@@ -1,4 +1,4 @@
-"""Benchmark OpenRouter models for drug name comparison accuracy."""
+"""Benchmark AI models for drug name comparison accuracy."""
 from __future__ import annotations
 
 import argparse
@@ -7,7 +7,7 @@ import json
 import time
 from pathlib import Path
 
-from drug_matcher.config import APIConfig, load_env, setup_logging
+from drug_matcher.config import APIConfig, load_env, setup_logging, resolve_api_config, PROVIDERS
 from drug_matcher.verifier import AIVerifier
 
 
@@ -45,21 +45,60 @@ BENCHMARK_CASES = [
     ("IMODIUM 2 MG 10 TAB", "IMODIUM 2 MG 6 CAP", False, "different"),
 ]
 
-MODELS = [
+# Free models on OpenRouter
+OPENROUTER_FREE_MODELS = [
+    "openai/gpt-oss-120b:free",
+    "openai/gpt-oss-20b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "nvidia/nemotron-3-nano-30b-a3b:free",
+    "nvidia/nemotron-nano-9b-v2:free",
+    "qwen/qwen3-next-80b-a3b-instruct:free",
+    "qwen/qwen3-coder:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "meta-llama/llama-3.2-3b-instruct:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "minimax/minimax-m2.5:free",
+    "z-ai/glm-4.5-air:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "inclusionai/ring-2.6-1t:free",
+    "tencent/hy3-preview:free",
+    "baidu/cobuddy:free",
+    "poolside/laguna-m.1:free",
+    "poolside/laguna-xs.2:free",
+    "liquid/lfm-2.5-1.2b-instruct:free",
+    "openrouter/free",
+]
+
+# Paid models on OpenRouter
+OPENROUTER_PAID_MODELS = [
     "openai/gpt-4o-mini",
     "deepseek/deepseek-chat-v3.1",
     "z-ai/glm-5.1",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "google/gemma-4-31b-it:free",
-    "qwen/qwen3-next-80b-a3b-instruct:free",
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "minimax/minimax-m2.5:free",
-    "z-ai/glm-4.5-air:free",
-    "openai/gpt-oss-120b:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
     "amazon/nova-micro-v1",
     "mistralai/mistral-nemo",
 ]
+
+# OpenCode Zen models
+OPENCODE_MODELS = [
+    "big-pickle",
+    "gpt-5.1",
+    "gpt-5.4-mini",
+    "claude-sonnet-4-5",
+    "gemini-3-flash",
+    "glm-5.1",
+    "minimax-m2.5",
+    "qwen3.5-plus",
+    "kimi-k2.5",
+]
+
+# All model presets
+MODEL_PRESETS = {
+    "openrouter-free": OPENROUTER_FREE_MODELS,
+    "openrouter-paid": OPENROUTER_PAID_MODELS,
+    "openrouter-all": OPENROUTER_FREE_MODELS + OPENROUTER_PAID_MODELS,
+    "opencode": OPENCODE_MODELS,
+}
 
 
 async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
@@ -138,10 +177,11 @@ async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
     }
 
 
-def generate_report(all_results: list[dict], output_path: str):
+def generate_report(all_results: list[dict], output_path: str, provider: str = ""):
     """Generate markdown report."""
     lines = []
-    lines.append("# 🏥 OpenRouter Model Benchmark — Drug Name Comparison\n")
+    title_provider = provider.upper() if provider else "All"
+    lines.append(f"# 🏥 {title_provider} Model Benchmark — Drug Name Comparison\n")
     lines.append(f"**Date**: {time.strftime('%Y-%m-%d %H:%M')}")
     lines.append(f"**Test cases**: {len(BENCHMARK_CASES)} (should-match: {sum(1 for _,_,e,_ in BENCHMARK_CASES if e)}, should-reject: {sum(1 for _,_,e,_ in BENCHMARK_CASES if not e)})")
     lines.append("")
@@ -194,7 +234,7 @@ def generate_report(all_results: list[dict], output_path: str):
 
     # Recommendations
     lines.append("## 💡 Recommendations\n")
-    free_models = [r for r in all_results if ":free" in r["model"] or r["accuracy"] > 0]
+    free_models = [r for r in all_results if ":free" in r["model"]]
     paid_models = [r for r in all_results if ":free" not in r["model"]]
 
     if free_models:
@@ -207,11 +247,12 @@ def generate_report(all_results: list[dict], output_path: str):
     lines.append("")
     lines.append("### To use a specific model:\n")
     lines.append("```bash")
-    lines.append("# Set in .env file:")
-    lines.append("echo 'AGENT_ROUTER_MODEL=openai/gpt-4o-mini' >> .env")
+    lines.append("# Via --provider and --model flags:")
+    lines.append("python run_ai_verify.py --limit 50 --provider opencode --model big-pickle")
+    lines.append("python run_ai_verify.py --limit 50 --provider openrouter --model openai/gpt-4o-mini")
     lines.append("")
-    lines.append("# Or via environment variable:")
-    lines.append("AGENT_ROUTER_MODEL=deepseek/deepseek-chat-v3.1 python run_ai_verify.py --limit 50")
+    lines.append("# Free model:")
+    lines.append("python run_ai_verify.py --limit 50 --provider openrouter --model openai/gpt-oss-120b:free")
     lines.append("```")
 
     Path(output_path).write_text("\n".join(lines), encoding="utf-8")
@@ -219,26 +260,47 @@ def generate_report(all_results: list[dict], output_path: str):
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Benchmark OpenRouter models for drug comparison")
-    parser.add_argument("--models", nargs="+", default=None, help="Models to test (default: all)")
+    parser = argparse.ArgumentParser(description="Benchmark AI models for drug comparison")
+    parser.add_argument("--models", nargs="+", default=None, help="Specific models to test")
+    parser.add_argument("--preset", default=None, choices=list(MODEL_PRESETS.keys()),
+                        help="Model preset to test (openrouter-free, openrouter-paid, openrouter-all, opencode)")
+    parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()),
+                        help="API provider (openrouter, opencode, agentrouter, custom)")
     parser.add_argument("--output", default="docs/MODEL_BENCHMARK.md", help="Output report path")
-    parser.add_argument("--key", default=None, help="API key (overrides .env)")
-    parser.add_argument("--base-url", default=None, help="Base URL (overrides .env)")
+    parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
+    parser.add_argument("--base-url", default=None, help="Base URL (overrides provider default)")
     args = parser.parse_args()
 
     load_env()
     setup_logging("WARNING")
 
-    api_key = args.key or APIConfig().api_key
-    base_url = args.base_url or APIConfig().base_url
+    # Resolve provider
+    provider = args.provider or ""
+    resolved = resolve_api_config(
+        provider=provider,
+        api_key=args.api_key or "",
+    )
+    api_key = resolved["api_key"]
+    base_url = args.base_url or resolved["base_url"]
 
     if not api_key:
-        print("❌ No API key found. Set AGENT_ROUTER_API_KEY in .env or use --key")
+        print("❌ No API key found. Set AGENT_ROUTER_API_KEY in .env or use --api-key")
         return
 
-    models = args.models or MODELS
+    # Resolve model list
+    if args.models:
+        models = args.models
+    elif args.preset:
+        models = MODEL_PRESETS[args.preset]
+    elif provider == "opencode":
+        models = OPENCODE_MODELS
+    elif provider == "openrouter":
+        models = OPENROUTER_FREE_MODELS + OPENROUTER_PAID_MODELS
+    else:
+        models = OPENROUTER_FREE_MODELS + OPENROUTER_PAID_MODELS
 
-    print(f"🧪 Benchmarking {len(models)} models with {len(BENCHMARK_CASES)} test cases each\n")
+    print(f"🧪 Benchmarking {len(models)} models with {len(BENCHMARK_CASES)} test cases each")
+    print(f"   Provider: {provider or 'auto'} | Base URL: {base_url}\n")
 
     all_results = []
     for model in models:
@@ -258,7 +320,7 @@ async def main():
                 "elapsed": 0, "results": [],
             })
 
-    generate_report(all_results, args.output)
+    generate_report(all_results, args.output, provider)
 
 
 if __name__ == "__main__":
