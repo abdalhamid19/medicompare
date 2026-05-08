@@ -15,6 +15,7 @@ def parse_args():
     parser.add_argument("--output", default=None, help="Output CSV path")
     parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
     parser.add_argument("--no-ai", action="store_true", help="Skip AI verification and search (algorithm only)")
+    parser.add_argument("--model", default=None, help="AI model to use (e.g. openai/gpt-4o-mini, amazon/nova-micro-v1)")
     return parser.parse_args()
 
 
@@ -33,6 +34,7 @@ def main():
     )
 
     api_cfg = APIConfig(
+        model=args.model or APIConfig().model,
         max_tokens=512,
         temperature=0.1,
     )
