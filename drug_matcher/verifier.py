@@ -143,34 +143,45 @@ class AIVerifier:
             "response_format": {"type": "json_object"},
         }
 
-        async with self._semaphore:
-            try:
-                async with self._session.post(
-                    f"{self._cfg.base_url}/chat/completions",
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        text = await resp.text()
-                        return {"is_correct": True, "reason": f"api_error_{resp.status}", "confidence": 0.0, "api_failed": True}
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    # Parse JSON response (with fallback for non-JSON)
-                    result = _extract_json(content)
-                    if result is None:
-                        # Model didn't return valid JSON, infer from text
-                        is_correct = _infer_is_correct(content)
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            async with self._semaphore:
+                try:
+                    async with self._session.post(
+                        f"{self._cfg.base_url}/chat/completions",
+                        json=payload,
+                    ) as resp:
+                        if resp.status == 429 and attempt < max_retries:
+                            # Rate limited — wait and retry
+                            retry_after = int(resp.headers.get("Retry-After", "10"))
+                            await asyncio.sleep(retry_after + attempt * 2)
+                            continue
+                        if resp.status != 200:
+                            text = await resp.text()
+                            return {"is_correct": True, "reason": f"api_error_{resp.status}", "confidence": 0.0, "api_failed": True}
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        # Parse JSON response (with fallback for non-JSON)
+                        result = _extract_json(content)
+                        if result is None:
+                            # Model didn't return valid JSON, infer from text
+                            is_correct = _infer_is_correct(content)
+                            return {
+                                "is_correct": is_correct,
+                                "reason": content[:200],
+                                "confidence": 0.5,
+                            }
                         return {
-                            "is_correct": is_correct,
-                            "reason": content[:200],
-                            "confidence": 0.5,
+                            "is_correct": bool(result.get("is_correct", False)),
+                            "reason": str(result.get("reason", "")),
+                            "confidence": float(result.get("confidence", 0.0)),
                         }
-                    return {
-                        "is_correct": bool(result.get("is_correct", False)),
-                        "reason": str(result.get("reason", "")),
-                        "confidence": float(result.get("confidence", 0.0)),
-                    }
-            except Exception as e:
-                return {"is_correct": True, "reason": f"exception:{type(e).__name__}", "confidence": 0.0}
+                except Exception as e:
+                    if attempt < max_retries:
+                        await asyncio.sleep(2 + attempt * 2)
+                        continue
+                    return {"is_correct": True, "reason": f"exception:{type(e).__name__}", "confidence": 0.0}
+        return {"is_correct": True, "reason": "max_retries_exceeded", "confidence": 0.0, "api_failed": True}
 
     async def verify_batch(self, matches: list[tuple[str, str, int]]) -> list[dict[str, Any]]:
         """Verify a batch of matches. Each item is (drug_a, drug_b, row_index)."""
@@ -218,27 +229,37 @@ If NONE are correct, set best_index to 0."""
             "response_format": {"type": "json_object"},
         }
 
-        async with self._semaphore:
-            try:
-                async with self._session.post(
-                    f"{self._cfg.base_url}/chat/completions",
-                    json=payload,
-                ) as resp:
-                    if resp.status != 200:
-                        return None
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
-                    result = _extract_json(content)
-                    if result is None:
-                        return None
-                    best_idx = int(result.get("best_index", 0))
-                    if best_idx > 0 and best_idx <= len(candidates):
-                        return {
-                            "record": candidates[best_idx - 1][0],
-                            "score": candidates[best_idx - 1][1],
-                            "reason": result.get("reason", ""),
-                            "confidence": float(result.get("confidence", 0.0)),
-                        }
-                    return {"record": None, "score": 0.0, "reason": result.get("reason", "none"), "confidence": float(result.get("confidence", 0.0))}
-            except Exception:
-                return None
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            async with self._semaphore:
+                try:
+                    async with self._session.post(
+                        f"{self._cfg.base_url}/chat/completions",
+                        json=payload,
+                    ) as resp:
+                        if resp.status == 429 and attempt < max_retries:
+                            retry_after = int(resp.headers.get("Retry-After", "10"))
+                            await asyncio.sleep(retry_after + attempt * 2)
+                            continue
+                        if resp.status != 200:
+                            return None
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        result = _extract_json(content)
+                        if result is None:
+                            return None
+                        best_idx = int(result.get("best_index", 0))
+                        if best_idx > 0 and best_idx <= len(candidates):
+                            return {
+                                "record": candidates[best_idx - 1][0],
+                                "score": candidates[best_idx - 1][1],
+                                "reason": result.get("reason", ""),
+                                "confidence": float(result.get("confidence", 0.0)),
+                            }
+                        return {"record": None, "score": 0.0, "reason": result.get("reason", "none"), "confidence": float(result.get("confidence", 0.0))}
+                except Exception:
+                    if attempt < max_retries:
+                        await asyncio.sleep(2 + attempt * 2)
+                        continue
+                    return None
+        return None

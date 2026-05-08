@@ -116,9 +116,9 @@ async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
     total = len(BENCHMARK_CASES)
     start = time.time()
 
-    async with AIVerifier(cfg, max_concurrent=3) as verifier:
+    async with AIVerifier(cfg, max_concurrent=2) as verifier:
         # Run in small batches to avoid rate limits
-        batch_size = 5
+        batch_size = 3
         for i in range(0, total, batch_size):
             batch = BENCHMARK_CASES[i:i + batch_size]
             tasks = []
@@ -161,8 +161,8 @@ async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
                     "api_failed": api_failed,
                 })
 
-            # Small delay between batches
-            await asyncio.sleep(0.5)
+            # Delay between batches to avoid rate limits
+            await asyncio.sleep(2)
 
     elapsed = time.time() - start
     # Only count cases where API actually responded
