@@ -28,10 +28,13 @@ pip install -r requirements.txt
 ```
 AGENT_ROUTER_API_KEY=your-key
 AGENT_ROUTER_BASE_URL=https://openrouter.ai/api/v1
-AGENT_ROUTER_MODEL=glm-5.1
+AGENT_ROUTER_MODEL=openai/gpt-4o-mini
+OPENCODE_API_KEY=your-opencode-key
+OPENROUTER_API_KEY=your-openrouter-key
 ```
 
 > بدون مفتاح API، يعمل النظام في وضع الخوارزمية فقط (بدون AI).
+> استخدم `--provider` لتحديد مزود API مباشرةً عن متغيرات البيئة.
 
 ### التشغيل
 
@@ -40,6 +43,9 @@ AGENT_ROUTER_MODEL=glm-5.1
 python run_matcher.py
 
 # مطابقة خوارزمية فقط (بدون AI)
+python run_matcher.py --no-ai
+
+# تشغيل AI تحقق فقط
 python run_ai_verify.py
 
 # تحديد عدد الأدوية (--limit)
@@ -62,11 +68,29 @@ python run_matcher.py --limit 10 --log-level DEBUG
 # تتبع تفصيلي لكل خطوة خوارزمية (--trace)
 python run_matcher.py --limit 50 --trace
 
+# استخدام مزود AI محدد (--provider)
+python run_ai_verify.py --provider opencode --model big-pickle
+python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
+python run_ai_verify.py --provider openrouter --model openai/gpt-oss-120b:free
+
+# تحديد مفتاح API مباشرة (--api-key)
+python run_ai_verify.py --provider opencode --api-key sk-xxx
+
+# اختبار اتصال API
+python test_api.py
+
+# مقارنة نماذج AI (benchmark)
+python benchmark_models.py --provider opencode --preset opencode
+python benchmark_models.py --provider openrouter --preset openrouter-free
+python benchmark_models.py --models big-pickle gpt-5.1 --provider opencode
+
 # اختبارات
 python run_tests.py
 ```
 
 ### خيارات سطر الأوامر
+
+#### `run_matcher.py` و `run_ai_verify.py`
 
 | الخيار | الوصف | الافتراضي |
 |---|---|---|
@@ -77,6 +101,20 @@ python run_tests.py
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 | `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 | `--no-ai` | تخطي AI (مطابقة خوارزمية فقط بدون تحقق أو بحث) | معطل |
+| `--provider` | مزود API: `opencode`, `openrouter`, `agentrouter`, `custom` | من .env |
+| `--model` | نموذج AI (مثل `big-pickle`, `openai/gpt-4o-mini`) | من .env |
+| `--api-key` | مفتاح API (يتجاوز .env) | من .env |
+
+#### `benchmark_models.py`
+
+| الخيار | الوصف | الافتراضي |
+|---|---|---|
+| `--provider` | مزود API | من .env |
+| `--preset` | مجموعة نماذج: `openrouter-free`, `openrouter-paid`, `openrouter-all`, `opencode` | حسب provider |
+| `--models` | نماذج محددة للاختبار | حسب preset |
+| `--output` | مسار تقرير Markdown | docs/MODEL_BENCHMARK.md |
+| `--api-key` | مفتاح API (يتجاوز .env) | من .env |
+| `--base-url` | رابط API (يتجاوز provider) | حسب provider |
 
 ## 📁 الهيكل
 
@@ -176,9 +214,28 @@ pytest tests/test_indexer.py  # اختبار واحد
 | AI واحد | O(1) | 1-3s |
 | AI دفعة (20) | O(1) | 3-5s (متوازي) |
 
+## 🤖 مزودي API المدعومين
+
+| المزود | `--provider` | Base URL | النموذج الافتراضي |
+|---|---|---|---|
+| OpenCode Zen | `opencode` | `opencode.ai/zen/v1` | `big-pickle` |
+| OpenRouter | `openrouter` | `openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
+| AgentRouter | `agentrouter` | `agentrouter.org/v1` | `glm-5.1` |
+| مخصص | `custom` | من .env | من .env |
+
+### أفضل النماذج المجانية (نتائج Benchmark)
+
+| النموذج | المزود | الدقة | مطابقة | رفض | الوقت |
+|---|---|---|---|---|---|
+| `big-pickle` 🥇 | OpenCode | **92%** | 83% | 100% | 41s |
+| `gpt-oss-20b:free` 🥈 | OpenRouter | **80%** | 92% | 69% | 124s |
+| `gpt-oss-120b:free` 🥉 | OpenRouter | **72%** | 92% | 54% | 122s |
+
+> راجع [FREE_BENCHMARK.md](docs/FREE_BENCHMARK.md) و [OPENCODE_BENCHMARK.md](docs/OPENCODE_BENCHMARK.md) للتفاصيل.
+
 ## 📝 الملاحظات
 
-- النموذج: `glm-5.1` من OpenRouter
+- أفضل نموذج مجاني: `big-pickle` من OpenCode (92% دقة)
 - معدل النجاح: 63.2% خوارزمي + ~85% مع التحقق
 - ~25 تطابق قد تحتاج مراجعة يدوية
 - الأسماء العربية: لا يتم التعامل معها في المطابقة
