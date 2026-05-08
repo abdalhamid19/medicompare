@@ -59,8 +59,8 @@ python run_matcher.py --output output/my_results.csv
 # تشغيل تجريبي سريع
 python run_matcher.py --limit 10 --log-level DEBUG
 
-# تتبع تفصيلي لكل خطوة خوارزمية (--log)
-python run_matcher.py --limit 50 --log
+# تتبع تفصيلي لكل خطوة خوارزمية (--trace)
+python run_matcher.py --limit 50 --trace
 
 # اختبارات
 python run_tests.py
@@ -75,7 +75,7 @@ python run_tests.py
 | `--threshold` | حد المطابقة الخوارزمية | 80 |
 | `--ai-threshold` | حد إحالة المطابقات للـ AI | 90.0 |
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
-| `--log` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
+| `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 
 ## 📁 الهيكل
 

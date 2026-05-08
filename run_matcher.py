@@ -13,7 +13,7 @@ def parse_args():
     parser.add_argument("--threshold", type=int, default=80, help="Fuzzy matching threshold (default: 80)")
     parser.add_argument("--ai-threshold", type=float, default=90.0, help="AI verification threshold (default: 90)")
     parser.add_argument("--output", default=None, help="Output CSV path")
-    parser.add_argument("--log", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
+    parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
     return parser.parse_args()
 
 
@@ -37,7 +37,7 @@ def main():
     )
 
     pipeline = MatchPipeline(cfg=match_cfg, api_cfg=api_cfg, limit=args.limit)
-    if args.log:
+    if args.trace:
         from drug_matcher.trace_log import MatchTraceLog
         pipeline._trace = MatchTraceLog(enabled=True)
     result = asyncio.run(pipeline.run_full(output_path=args.output))
