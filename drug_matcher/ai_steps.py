@@ -41,6 +41,8 @@ async def run_ai_verification(
                 row["code"], row["drug_name"],
                 parsed.normalized, parsed.brand,
                 score, cfg.ai_verify_threshold,
+                row["matched_product_name_en"],
+                parsed.brand, row["match_method"],
             )
     items = _build_verify_items(to_verify)
     async with AIVerifier(
@@ -245,9 +247,12 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             )
         return 0
     if trace and trace.enabled:
+        cand_names = [
+            c[0]["product_name_en"] for c in candidates
+        ]
         trace.log_ai_search_sent(
             code, drug_name, norm, parsed.brand,
-            len(candidates),
+            len(candidates), cand_names,
         )
     ai_result = await verifier.find_better_match(drug_name, candidates)
     confidence = ai_result.get("confidence", 0) if ai_result else 0

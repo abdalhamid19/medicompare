@@ -161,6 +161,7 @@ class MatchTraceLog:
 
     def log_ai_verify_sent(
         self, code, name, norm, brand, score, threshold,
+        matched_name, matched_brand, method,
     ):
         if not self._enabled:
             return
@@ -169,10 +170,14 @@ class MatchTraceLog:
         row["ai_phase"] = "verify"
         row["score"] = round(score, 1)
         row["threshold"] = threshold
+        row["candidate_name"] = matched_name or ""
+        row["candidate_brand"] = matched_brand or ""
+        row["scorer"] = method
         row["selection_reason"] = (
-            f"algo_score={round(score, 1)} "
-            f"< ai_threshold={threshold}"
-            f" -> sent to AI verification"
+            f"algo matched '{matched_name}' "
+            f"(brand={matched_brand}) "
+            f"score={round(score, 1)} < ai_threshold={threshold}"
+            f" -> sent to AI to verify correctness"
         )
         self._rows.append(row)
 
@@ -193,16 +198,18 @@ class MatchTraceLog:
         self._rows.append(row)
 
     def log_ai_search_sent(
-        self, code, name, norm, brand, n_candidates,
+        self, code, name, norm, brand,
+        n_candidates, candidate_names,
     ):
         if not self._enabled:
             return
         row = self._base(code, name, norm, brand)
         row["step"] = "ai_search_sent"
         row["ai_phase"] = "search"
+        row["candidate_name"] = "; ".join(candidate_names[:5])
         row["selection_reason"] = (
-            f"no_match + {n_candidates} candidates"
-            f" -> sent to AI search"
+            f"no_match + {n_candidates} candidates found"
+            f" -> sent to AI to pick best match"
         )
         self._rows.append(row)
 
@@ -329,8 +336,10 @@ class MatchTraceLog:
             f.write(f"     reason: {row['selection_reason']}\n\n")
         elif step == "ai_verify_sent":
             f.write(
-                f"  [AI VERIFY] sent  "
-                f"score={row['score']} < threshold={row['threshold']}\n",
+                f"  [AI VERIFY] sent to verify: "
+                f"'{row['candidate_name']}'"
+                f"  (brand={row['candidate_brand']})"
+                f"  score={row['score']} < threshold={row['threshold']}\n",
             )
         elif step == "ai_verify_result":
             f.write(
@@ -339,9 +348,12 @@ class MatchTraceLog:
             )
         elif step == "ai_search_sent":
             f.write(
-                f"  [AI SEARCH] sent  "
-                f"{row['selection_reason']}\n",
+                f"  [AI SEARCH] sent with {row['selection_reason']}\n"
             )
+            if row.get('candidate_name'):
+                f.write(
+                    f"     candidates: {row['candidate_name']}\n"
+                )
         elif step == "ai_search_result":
             if row["ai_result"] == "ai_found":
                 f.write(
