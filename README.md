@@ -12,18 +12,26 @@
 
 ## 🚀 البدء السريع
 
-### المتطلبات
+### إعداد البيئة
 
 ```bash
-pip install pandas numpy rapidfuzz aiohttp requests
+# إنشاء بيئة افتراضية
+python3 -m venv .venv
+source .venv/bin/activate       # Linux/Mac
+# .venv\Scripts\activate        # Windows
+
+# تثبيت المتطلبات
+pip install -r requirements.txt
 ```
 
-**متغيرات البيئة** (ملف `.env`):
+**متغيرات البيئة** (ملف `.env` في جذر المشروع):
 ```
 AGENT_ROUTER_API_KEY=your-key
 AGENT_ROUTER_BASE_URL=https://openrouter.ai/api/v1
 AGENT_ROUTER_MODEL=glm-5.1
 ```
+
+> بدون مفتاح API، يعمل النظام في وضع الخوارزمية فقط (بدون AI).
 
 ### التشغيل
 
@@ -73,12 +81,14 @@ medicompare/
 │   ├── config.py          # الإعدادات
 │   ├── normalizer.py      # التطبيع
 │   ├── indexer.py         # البحث
-│   ├── verifier.py        # AI verification
+│   ├── ai_steps.py        # خطوات AI (تحقق + بحث)
+│   ├── verifier.py        # AI API client
 │   └── pipeline.py        # التنسيق
 ├── input/                 # البيانات المدخلة
 ├── output/                # النتائج
 ├── tests/                 # الاختبارات
-└── docs/                  # التوثيق التفصيلي
+├── docs/                  # التوثيق التفصيلي
+└── requirements.txt       # المتطلبات
 ```
 
 ## 📚 التوثيق
