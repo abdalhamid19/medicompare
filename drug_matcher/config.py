@@ -25,11 +25,51 @@ class MatchingConfig:
     ai_max_concurrent: int = 5
     top_k_candidates: int = 10
 
+PROVIDERS = {
+    "openrouter": {
+        "base_url": "https://openrouter.ai/api/v1",
+        "env_key": "OPENROUTER_API_KEY",
+        "default_model": "openai/gpt-4o-mini",
+    },
+    "opencode": {
+        "base_url": "https://opencode.ai/zen/v1",
+        "env_key": "OPENCODE_API_KEY",
+        "default_model": "big-pickle",
+    },
+    "agentrouter": {
+        "base_url": "https://agentrouter.org/v1",
+        "env_key": "AGENT_ROUTER_API_KEY",
+        "default_model": "glm-5.1",
+    },
+    "custom": {
+        "base_url": "",
+        "env_key": "AGENT_ROUTER_API_KEY",
+        "default_model": "",
+    },
+}
+
+def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -> dict:
+    """Resolve API config from provider name, falling back to env vars.
+    Returns dict with api_key, base_url, model."""
+    # If provider specified, use its defaults
+    if provider and provider in PROVIDERS:
+        p = PROVIDERS[provider]
+        key = api_key or os.getenv(p["env_key"], "") or os.getenv("AGENT_ROUTER_API_KEY", "")
+        url = p["base_url"]
+        mdl = model or os.getenv("AGENT_ROUTER_MODEL", "") or p["default_model"]
+        return {"api_key": key, "base_url": url, "model": mdl}
+    # No provider: use env vars or .env
+    key = api_key or os.getenv("AGENT_ROUTER_API_KEY", "")
+    url = os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    mdl = model or os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini")
+    return {"api_key": key, "base_url": url, "model": mdl}
+
+
 @dataclass(frozen=True)
 class APIConfig:
     api_key: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_API_KEY", ""))
-    base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://agentrouter.org/v1"))
-    model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "glm-5.1"))
+    base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+    model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini"))
     max_tokens: int = 1024
     temperature: float = 0.1
 

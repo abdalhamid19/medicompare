@@ -2,7 +2,7 @@
 import argparse
 import asyncio
 
-from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env
+from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env, resolve_api_config, PROVIDERS
 from drug_matcher.pipeline import MatchPipeline
 
 
@@ -15,7 +15,9 @@ def parse_args():
     parser.add_argument("--output", default=None, help="Output CSV path")
     parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
     parser.add_argument("--no-ai", action="store_true", help="Skip AI verification and search (algorithm only)")
-    parser.add_argument("--model", default=None, help="AI model to use (e.g. openai/gpt-4o-mini, amazon/nova-micro-v1)")
+    parser.add_argument("--model", default=None, help="AI model to use (e.g. openai/gpt-4o-mini, big-pickle)")
+    parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()), help="API provider (openrouter, opencode, agentrouter, custom)")
+    parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
     return parser.parse_args()
 
 
@@ -33,8 +35,15 @@ def main():
         top_k_candidates=10,
     )
 
+    resolved = resolve_api_config(
+        provider=args.provider or "",
+        model=args.model or "",
+        api_key=args.api_key or "",
+    )
     api_cfg = APIConfig(
-        model=args.model or APIConfig().model,
+        api_key=resolved["api_key"],
+        base_url=resolved["base_url"],
+        model=resolved["model"],
         max_tokens=512,
         temperature=0.1,
     )
