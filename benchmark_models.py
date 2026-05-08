@@ -139,29 +139,41 @@ async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
                     })
                     continue
 
+                api_failed = result.get("api_failed", False)
                 got = result.get("is_correct", False)
                 confidence = result.get("confidence", 0)
                 reason = result.get("reason", "")
-                match = (got == expected)
-                if match:
-                    correct_count += 1
+
+                # API failures don't count as real decisions
+                if api_failed:
+                    match = False
+                    reason = f"⚠️ {reason}"
+                else:
+                    match = (got == expected)
+                    if match:
+                        correct_count += 1
 
                 results.append({
                     "drug": drug_name, "candidate": candidate,
-                    "expected": expected, "got": got,
+                    "expected": expected, "got": got if not api_failed else None,
                     "is_correct_match": match, "confidence": confidence,
                     "reason": reason, "match": match,
+                    "api_failed": api_failed,
                 })
 
             # Small delay between batches
             await asyncio.sleep(0.5)
 
     elapsed = time.time() - start
-    accuracy = correct_count / total if total > 0 else 0
+    # Only count cases where API actually responded
+    valid_cases = [r for r in results if not r.get("api_failed", False)]
+    valid_count = len(valid_cases)
+    api_failed_count = sum(1 for r in results if r.get("api_failed", False))
+    accuracy = correct_count / valid_count if valid_count > 0 else 0
 
-    # Breakdown by category
-    correct_cases = [r for r in results if r["expected"] is True]
-    incorrect_cases = [r for r in results if r["expected"] is False]
+    # Breakdown by category (exclude api_failed)
+    correct_cases = [r for r in results if r["expected"] is True and not r.get("api_failed", False)]
+    incorrect_cases = [r for r in results if r["expected"] is False and not r.get("api_failed", False)]
     correct_acc = sum(1 for r in correct_cases if r["match"]) / len(correct_cases) if correct_cases else 0
     incorrect_acc = sum(1 for r in incorrect_cases if r["match"]) / len(incorrect_cases) if incorrect_cases else 0
 
@@ -170,6 +182,8 @@ async def benchmark_model(model: str, api_key: str, base_url: str) -> dict:
         "accuracy": accuracy,
         "correct_count": correct_count,
         "total": total,
+        "valid_count": valid_count,
+        "api_failed_count": api_failed_count,
         "correct_cases_accuracy": correct_acc,
         "incorrect_cases_accuracy": incorrect_acc,
         "elapsed": round(elapsed, 1),
@@ -191,15 +205,19 @@ def generate_report(all_results: list[dict], output_path: str, provider: str = "
 
     # Summary table
     lines.append("## 📊 Summary Ranking\n")
-    lines.append("| # | Model | Accuracy | Should-Match | Should-Reject | Time (s) |")
-    lines.append("|---|---|---|---|---|---|")
+    lines.append("| # | Model | Accuracy | Should-Match | Should-Reject | API Failed | Time (s) |")
+    lines.append("|---|---|---|---|---|---|---|")
     for i, r in enumerate(all_results, 1):
         emoji = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+        failed = r.get("api_failed_count", 0)
+        failed_str = f"⚠️ {failed}/{r['total']}" if failed > 0 else "0"
+        valid = r.get("valid_count", r["total"])
         lines.append(
             f"| {emoji} | `{r['model']}` | "
-            f"**{r['accuracy']:.0%}** ({r['correct_count']}/{r['total']}) | "
+            f"**{r['accuracy']:.0%}** ({r['correct_count']}/{valid}) | "
             f"{r['correct_cases_accuracy']:.0%} | "
             f"{r['incorrect_cases_accuracy']:.0%} | "
+            f"{failed_str} | "
             f"{r['elapsed']} |"
         )
     lines.append("")
@@ -210,6 +228,8 @@ def generate_report(all_results: list[dict], output_path: str, provider: str = "
     lines.append(f"- **Overall accuracy**: {best['accuracy']:.0%}")
     lines.append(f"- **Should-match accuracy**: {best['correct_cases_accuracy']:.0%}")
     lines.append(f"- **Should-reject accuracy**: {best['incorrect_cases_accuracy']:.0%}")
+    if best.get('api_failed_count', 0) > 0:
+        lines.append(f"- ⚠️ **API failures**: {best['api_failed_count']}/{best['total']} cases")
     lines.append(f"- **Time**: {best['elapsed']}s")
     lines.append("")
 
