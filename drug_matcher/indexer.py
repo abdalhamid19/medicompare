@@ -1,7 +1,6 @@
-"""Inverted index for fast brand-based lookup + fuzzy matching cache."""
+"""Inverted index for fast brand-based lookup + fuzzy matching."""
 import re
 from collections import defaultdict
-from typing import Any
 
 import pandas as pd
 from rapidfuzz import fuzz, process
@@ -11,95 +10,163 @@ from .config import MatchingConfig
 
 
 class DrugIndex:
-    """Pre-built index over tawreed products for O(1) brand lookup + cached fuzzy search."""
+    """Pre-built index over tawreed products for O(1) brand
+    lookup + cached fuzzy search. Uses list-based storage."""
 
-    __slots__ = ("_df", "_norms", "_records", "_brand_index", "_cfg", "_parsed_cache")
+    __slots__ = (
+        "_names_en", "_names_ar", "_ids",
+        "_norms", "_parsed", "_brand_index", "_cfg",
+    )
 
     def __init__(self, tawreed_df: pd.DataFrame, cfg: MatchingConfig | None = None):
         self._cfg = cfg or MatchingConfig()
-        self._df = tawreed_df.rename(columns={
+        df = tawreed_df.rename(columns={
             tawreed_df.columns[0]: "product_name_ar",
             tawreed_df.columns[1]: "product_name_en",
             tawreed_df.columns[2]: "store_product_id",
         })
-
-        # Pre-compute normalized names (vectorized)
-        self._df["norm_en"] = self._df["product_name_en"].apply(normalize)
-        self._norms = self._df["norm_en"].tolist()
-        self._records = self._df.to_dict("records")
-
-        # Build inverted index: brand_prefix -> [record_indices]
+        self._names_en = df["product_name_en"].tolist()
+        self._names_ar = df["product_name_ar"].tolist()
+        self._ids = df["store_product_id"].astype(str).tolist()
+        self._norms = [normalize(n) for n in self._names_en]
+        self._parsed = [parse_drug(n) for n in self._names_en]
         self._brand_index: dict[str, list[int]] = defaultdict(list)
-        self._parsed_cache: dict[int, DrugComponents] = {}
+        self._build_brand_index()
 
-        for i, row in enumerate(self._records):
-            parsed = parse_drug(row["product_name_en"])
-            self._parsed_cache[i] = parsed
+    def _build_brand_index(self):
+        for i, parsed in enumerate(self._parsed):
             brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
-            for prefix_len in range(3, min(len(brand) + 1, 8)):
-                self._brand_index[brand[:prefix_len]].append(i)
+            for plen in range(3, min(len(brand) + 1, 8)):
+                self._brand_index[brand[:plen]].append(i)
 
-    def lookup_by_brand(self, drug_components: DrugComponents) -> list[tuple[dict, int]]:
-        """Fast brand-based lookup returning (record, index) pairs."""
-        brand = re.sub(r"[^A-Z0-9]", "", drug_components.brand)
+    # --- public read interface ---
+
+    def get_record(self, idx: int) -> dict:
+        """Return record dict for a given index."""
+        return {
+            "product_name_en": self._names_en[idx],
+            "product_name_ar": self._names_ar[idx],
+            "store_product_id": self._ids[idx],
+        }
+
+    def get_parsed(self, idx: int) -> DrugComponents:
+        """Return parsed components for a given index."""
+        return self._parsed[idx]
+
+    def score_candidate(self, query_norm: str, idx: int, scorer=None) -> float:
+        """Score a candidate by index using the given scorer."""
+        scorer = scorer or fuzz.token_sort_ratio
+        return scorer(query_norm, self._norms[idx])
+
+    def get_candidates(
+        self, parsed: DrugComponents, limit: int = 10,
+    ) -> list[tuple[int, float]]:
+        """Return (idx, score) pairs for brand + fuzzy candidates."""
+        brand_hits = self._brand_lookup(parsed)
+        fuzzy_hits = self._fuzzy_lookup(parsed.normalized, limit)
+        return self._dedupe(brand_hits + fuzzy_hits)
+
+    # --- internal lookups ---
+
+    def _brand_lookup(self, parsed: DrugComponents) -> list[tuple[int, float]]:
+        brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
         if len(brand) < 3:
             return []
-
-        candidates = []
+        hits = []
         seen = set()
-        for prefix_len in range(min(len(brand), 7), 2, -1):
-            prefix = brand[:prefix_len]
-            for idx in self._brand_index.get(prefix, []):
+        for plen in range(min(len(brand), 7), 2, -1):
+            for idx in self._brand_index.get(brand[:plen], []):
                 if idx not in seen:
                     seen.add(idx)
-                    is_ok, _ = components_match(drug_components, self._parsed_cache[idx], self._cfg.brand_prefix_min)
+                    is_ok, _ = components_match(
+                        parsed, self._parsed[idx],
+                        self._cfg.brand_prefix_min,
+                    )
                     if is_ok:
-                        candidates.append((self._records[idx], idx))
-        return candidates
+                        score = fuzz.token_sort_ratio(
+                            parsed.normalized, self._norms[idx],
+                        )
+                        hits.append((idx, score))
+        return hits
 
-    def fuzzy_match(self, query: str, top_k: int | None = None) -> list[tuple[dict, float, int]]:
-        """Fuzzy match returning (record, score, index) sorted by score desc."""
-        top_k = top_k or self._cfg.top_k_candidates
-        results = process.extract(query, self._norms, scorer=fuzz.token_set_ratio, limit=top_k)
+    def _fuzzy_lookup(self, query: str, limit: int) -> list[tuple[int, float]]:
+        results = process.extract(
+            query, self._norms,
+            scorer=fuzz.token_set_ratio, limit=limit,
+        )
+        return [
+            (idx, score) for _, score, idx in results
+            if score >= self._cfg.fuzzy_threshold
+        ]
+
+    def _dedupe(self, hits: list[tuple[int, float]]) -> list[tuple[int, float]]:
+        seen = set()
         out = []
-        for match_name, score, idx in results:
-            if score >= self._cfg.fuzzy_threshold:
-                out.append((self._records[idx], score, idx))
+        for idx, score in hits:
+            if idx not in seen:
+                seen.add(idx)
+                out.append((idx, score))
+        return out
+
+    # --- top-level match ---
+
+    def lookup_by_brand(self, drug_components: DrugComponents):
+        """Brand lookup returning (record_dict, index) pairs."""
+        return [(self.get_record(i), i) for i, _ in self._brand_lookup(drug_components)]
+
+    def fuzzy_match(self, query: str, top_k: int | None = None):
+        """Fuzzy match returning (record_dict, score, index)."""
+        top_k = top_k or self._cfg.top_k_candidates
+        out = []
+        for idx, score in self._fuzzy_lookup(query, top_k):
+            out.append((self.get_record(idx), score, idx))
         return out
 
     def best_match(self, drug_name: str) -> tuple[dict | None, float, str]:
-        """Find best verified match for a drug name. Returns (record, score, method)."""
+        """Find best verified match. Returns (record, score, method)."""
         parsed = parse_drug(drug_name)
         norm = parsed.normalized
-
         if not norm or len(norm) < 3:
             return None, 0.0, "too_short"
+        rec, score = self._try_brand_match(parsed, norm)
+        if rec is not None:
+            return rec, score, "brand_index"
+        rec, score, method = self._try_fuzzy_match(parsed, norm)
+        if rec is not None:
+            return rec, score, method
+        return None, 0.0, "no_match"
 
-        # Strategy 1: Brand index lookup (fastest, O(1))
-        brand_hits = self.lookup_by_brand(parsed)
-        if brand_hits:
-            best_rec, best_idx = max(brand_hits, key=lambda x: fuzz.token_sort_ratio(norm, self._norms[x[1]]))
-            score = fuzz.token_sort_ratio(norm, self._norms[best_idx])
-            # Reject brand_index matches with very low fuzzy score (different products)
-            if score >= self._cfg.fuzzy_threshold:
-                return best_rec, score, "brand_index"
+    def _try_brand_match(self, parsed, norm):
+        hits = self._brand_lookup(parsed)
+        if not hits:
+            return None, 0.0
+        best_idx, best_score = max(hits, key=lambda x: x[1])
+        if best_score >= self._cfg.fuzzy_threshold:
+            return self.get_record(best_idx), best_score
+        return None, 0.0
 
-        # Strategy 2: Fuzzy matching with multiple scorers
+    def _try_fuzzy_match(self, parsed, norm):
         best = None
         for scorer in [fuzz.token_set_ratio, fuzz.token_sort_ratio, fuzz.partial_token_sort_ratio]:
-            result = process.extractOne(norm, self._norms, scorer=scorer, score_cutoff=self._cfg.fuzzy_threshold)
+            result = process.extractOne(
+                norm, self._norms, scorer=scorer,
+                score_cutoff=self._cfg.fuzzy_threshold,
+            )
             if result:
-                match_name, score, idx = result
-                is_ok, _ = components_match(parsed, self._parsed_cache[idx], self._cfg.brand_prefix_min)
-                if is_ok:
-                    if best is None or score > best[1]:
-                        best = (self._records[idx], score, scorer.__name__)
-
-        if best:
-            return best[0], best[1], best[2]
-
-        return None, 0.0, "no_match"
+                _, score, idx = result
+                is_ok, _ = components_match(
+                    parsed, self._parsed[idx],
+                    self._cfg.brand_prefix_min,
+                )
+                if is_ok and (best is None or score > best[1]):
+                    best = (self.get_record(idx), score, scorer.__name__)
+        return best or (None, 0.0, "")
 
     @property
     def size(self) -> int:
-        return len(self._records)
+        return len(self._names_en)
+
+    @property
+    def norms(self) -> list[str]:
+        """Public read-only access to normalized names list."""
+        return self._norms
