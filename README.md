@@ -59,6 +59,9 @@ python run_matcher.py --output output/my_results.csv
 # تشغيل تجريبي سريع
 python run_matcher.py --limit 10 --log-level DEBUG
 
+# تتبع تفصيلي لكل خطوة خوارزمية (--log)
+python run_matcher.py --limit 50 --log
+
 # اختبارات
 python run_tests.py
 ```
@@ -72,6 +75,7 @@ python run_tests.py
 | `--threshold` | حد المطابقة الخوارزمية | 80 |
 | `--ai-threshold` | حد إحالة المطابقات للـ AI | 90.0 |
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
+| `--log` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 
 ## 📁 الهيكل
 
@@ -105,6 +109,7 @@ medicompare/
 | `config.py` | إعدادات centralized (fuzzy_threshold, brand_prefix_min, etc) |
 | `normalizer.py` | تطبيع واستخراج مكونات الدواء (brand, dosage, form, etc) |
 | `indexer.py` | فهرس مقلوب (Brand Index O(1)) + Fuzzy matching (O(n)) |
+| `trace_log.py` | تتبع تفصيلي لخطوات الخوارزمية (CSV+TXT) |
 | `verifier.py` | التحقق بـ AI متزامن (max 5 طلبات متوازية) |
 | `pipeline.py` | 4 مراحل: مطابقة → تحقق → بحث → تنظيف |
 

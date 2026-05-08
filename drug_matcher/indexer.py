@@ -136,6 +136,60 @@ class DrugIndex:
             return rec, score, method
         return None, 0.0, "no_match"
 
+    def best_match_detailed(
+        self, drug_name: str,
+    ) -> tuple[dict | None, float, str, dict]:
+        """Like best_match but also returns trace dict for logging."""
+        parsed = parse_drug(drug_name)
+        norm = parsed.normalized
+        trace = {
+            "norm": norm, "brand": parsed.brand,
+            "brand_hits": [], "fuzzy_steps": [],
+            "component_checks": [],
+        }
+        if not norm or len(norm) < 3:
+            return None, 0.0, "too_short", trace
+        hits = self._brand_lookup(parsed)
+        trace["brand_hits"] = hits
+        if hits:
+            best_idx, best_score = max(hits, key=lambda x: x[1])
+            if best_score >= self._cfg.fuzzy_threshold:
+                ok, reason = components_match(
+                    parsed, self._parsed[best_idx],
+                    self._cfg.brand_prefix_min,
+                )
+                trace["component_checks"].append(
+                    (best_idx, ok, reason),
+                )
+                if ok:
+                    return (
+                        self.get_record(best_idx),
+                        best_score, "brand_index", trace,
+                    )
+        for scorer in [fuzz.token_set_ratio, fuzz.token_sort_ratio, fuzz.partial_token_sort_ratio]:
+            result = process.extractOne(
+                norm, self._norms, scorer=scorer,
+                score_cutoff=self._cfg.fuzzy_threshold,
+            )
+            trace["fuzzy_steps"].append(
+                (scorer.__name__, result),
+            )
+            if result:
+                _, score, idx = result
+                ok, reason = components_match(
+                    parsed, self._parsed[idx],
+                    self._cfg.brand_prefix_min,
+                )
+                trace["component_checks"].append(
+                    (idx, ok, reason),
+                )
+                if ok:
+                    return (
+                        self.get_record(idx), score,
+                        scorer.__name__, trace,
+                    )
+        return None, 0.0, "no_match", trace
+
     def _try_brand_match(self, parsed, norm):
         hits = self._brand_lookup(parsed)
         if not hits:

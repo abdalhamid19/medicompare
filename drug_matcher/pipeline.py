@@ -9,6 +9,7 @@ from .config import MatchingConfig, APIConfig, Paths, load_env
 from .normalizer import parse_drug, components_match
 from .indexer import DrugIndex
 from .ai_steps import run_ai_verification, run_ai_search
+from .trace_log import MatchTraceLog
 
 logger = logging.getLogger("medicompare")
 
@@ -24,7 +25,7 @@ class MatchPipeline:
 
     __slots__ = (
         "_cfg", "_api_cfg", "_drugs_df", "_index",
-        "_results", "_limit",
+        "_results", "_limit", "_trace",
     )
 
     def __init__(
@@ -40,6 +41,7 @@ class MatchPipeline:
         self._drugs_df: pd.DataFrame | None = None
         self._index: DrugIndex | None = None
         self._results: pd.DataFrame | None = None
+        self._trace: MatchTraceLog | None = None
 
     # --- data loading ---
 
@@ -78,12 +80,43 @@ class MatchPipeline:
         results = []
         stats = {"brand_index": 0, "fuzzy": 0, "no_match": 0}
         for row in self._drugs_df.itertuples(index=False):
-            rec, score, method = self._index.best_match(str(row.drug_name))
+            rec, score, method = self._match_one(row, stats)
             results.append(self._make_row(row, rec, score, method, stats))
         self._results = pd.DataFrame(results)
         logger.info(f"Phase 1 done: {stats}")
         self._log_match_counts()
         return self._results
+
+    def _match_one(self, row, stats):
+        """Match one drug, with trace if enabled."""
+        drug_name = str(row.drug_name)
+        if not self._trace or not self._trace.enabled:
+            return self._index.best_match(drug_name)
+        code = str(row.code)
+        rec, score, method, trace = self._index.best_match_detailed(drug_name)
+        self._trace.log_normalization(
+            code, drug_name, trace["norm"], trace["brand"],
+        )
+        self._trace.log_brand_lookup(
+            code, drug_name, trace["norm"],
+            trace["brand"], trace["brand_hits"],
+        )
+        for scorer_name, result in trace["fuzzy_steps"]:
+            self._trace.log_fuzzy_step(
+                code, drug_name, trace["norm"],
+                trace["brand"], scorer_name, result,
+            )
+        for cidx, ok, reason in trace["component_checks"]:
+            self._trace.log_component_check(
+                code, drug_name, trace["norm"],
+                trace["brand"], cidx, ok, reason,
+            )
+        match_name = rec["product_name_en"] if rec else None
+        self._trace.log_final(
+            code, drug_name, trace["norm"],
+            trace["brand"], match_name, score, method,
+        )
+        return rec, score, method
 
     def _make_row(self, row, rec, score, method, stats):
         code = str(row.code)
@@ -187,6 +220,8 @@ class MatchPipeline:
         path = output_path or str(Paths().output_csv)
         self._results.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info(f"Saved to {path}")
+        if self._trace and self._trace.enabled:
+            self._trace.save()
         return path
 
     def print_stats(self):
