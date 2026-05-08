@@ -1,11 +1,6 @@
 ﻿code,drug_name,matched_product_name_en,matched_product_name_ar,matched_store_product_id,match_score,verified,match_method
-90874,***GREEN TEA,GREENTAL 30 CAP,جرينتال 30 كبسوله,2622756,82.4,algo_match,partial_token_sort_ratio
+90874,***GREEN TEA,GREENTAL 30 CAP,جرينتال 30 كبسوله,2622756,82.4,ai_confirmed,ai_verified
 87648,**IMP panadol night 20 TAB,,,,,,no_match
-84773,.CALCIMA 30 PICS,CALCIMA 30 SOFT CHEWS PIECES,كالسيما 30 اقراص (انفينتي),2476136,80.0,algo_match,token_set_ratio
+84773,.CALCIMA 30 PICS,CALCIMA 30 SOFT CHEWS PIECES,كالسيما 30 اقراص (انفينتي),2476136,80.0,ai_confirmed,ai_verified
 oly,`OLYSRE 20 TAB,OLYSRE 20 TAB,اوليسري 20 اقراص,2140438,96.3,algo_match,token_set_ratio
 71475,+*** IMP BIOTIN 10000 MCG 100 TAB,,,,,,no_match
-ANAF,+***IMP ANAFRANIL 25MG 30 TAB,,,,,,no_match
-53804,+***IMP FEROGLOBIN B12 30 CAP,FEROGLOBIN 30 CAPS,فيروجلوبين 30 كبسول,1627515,85.0,algo_match,brand_index
-18646,+***imp NEO MERCAZOLE 5 MG 100 TAB,,,,,,no_match
-55748,+***IMP OSTEOCARE SYRUP 200ML,,,,,,no_match
-54473,+***IMP OSTEOCARE ORIGINAL 30 TAB,,,,,,no_match

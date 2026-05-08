@@ -2,7 +2,7 @@
 import argparse
 import asyncio
 
-from drug_matcher.config import MatchingConfig, APIConfig, setup_logging
+from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env
 from drug_matcher.pipeline import MatchPipeline
 
 
@@ -20,6 +20,7 @@ def parse_args():
 def main():
     args = parse_args()
     setup_logging(args.log_level)
+    load_env()
 
     match_cfg = MatchingConfig(
         fuzzy_threshold=args.threshold,
