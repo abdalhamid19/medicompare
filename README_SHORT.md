@@ -60,26 +60,25 @@ medicompare/
 
 - **[ARCHITECTURE.md](docs/ARCHITECTURE.md)** — شرح العمارة والمكونات
 - **[ALGORITHMS.md](docs/ALGORITHMS.md)** — الخوارزميات مع أمثلة عملية
-- **[PROJECT_RULES.md](docs/PROJECT_RULES.md)** — القواعد والمعايير
-- **[MATCHING_STRATEGY_REVIEW.md](docs/MATCHING_STRATEGY_REVIEW.md)** — مراجعة الاستراتيجيات
+- **[PROJECT_RULES.md](docs/PROJECT_RULES.md)** — القواعس والمعايير
 
 ## 🔧 المكونات الأساسية
 
 | الملف | الوصف |
 |---|---|
-| `config.py` | إعدادات centralized (fuzzy_threshold, brand_prefix_min, etc) |
-| `normalizer.py` | تطبيع واستخراج مكونات الدواء (brand, dosage, form, etc) |
-| `indexer.py` | فهرس مقلوب (Brand Index O(1)) + Fuzzy matching (O(n)) |
-| `verifier.py` | التحقق بـ AI متزامن (max 5 طلبات متوازية) |
-| `pipeline.py` | 4 مراحل: مطابقة → تحقق → بحث → تنظيف |
+| `config.py` | إعدادات centralized |
+| `normalizer.py` | تطبيع واستخراج المكونات |
+| `indexer.py` | فهرس مقلوب + Fuzzy matching |
+| `verifier.py` | التحقق بـ AI متزامن |
+| `pipeline.py` | 4 مراحل: مطابقة، تحقق، بحث، تنظيف |
 
 ## 📊 العمليات الأربع
 
 ```
-1️⃣ المطابقة الخوارزمية     Brand Index (O(1)) + Fuzzy (O(n))
-2️⃣ التحقق بالـ AI          للنتائج الضعيفة (<90%)
-3️⃣ بحث الـ AI               عن مطابقات للأصناف غير المطابقة
-4️⃣ تنظيف خوارزمي نهائي     تحقق إضافي
+1️⃣ المطابقة الخوارزمية (Brand Index + Fuzzy)
+2️⃣ التحقق بالـ AI للنتائج الضعيفة (<90%)
+3️⃣ بحث الـ AI عن مطابقات للأصناف غير المطابقة
+4️⃣ تنظيف خوارزمي نهائي
 ```
 
 ## 📋 الإخراج
@@ -106,23 +105,19 @@ ai_max_concurrent = 5             # طلبات AI المتوازية
 ai_batch_size = 20                # حجم دفعة الـ AI
 ```
 
-راجع [ARCHITECTURE.md](docs/ARCHITECTURE.md) لفهم كل خيار بالتفصيل.
-
 ## 🎯 الميزات
 
-✅ **فهرس مقلوب**: بحث O(1) عن طريق البادئة  
+✅ **فهرس مقلوب**: بحث O(1) بدل O(n)  
 ✅ **Fuzzy Matching**: 3 طرق مختلفة للمقارنة  
-✅ **AI Verification**: تحقق متزامن من OpenRouter API  
+✅ **AI Verification**: تحقق متزامن بـ Semaphore  
 ✅ **Batch Processing**: معالجة 20 تطابق معاً  
-✅ **Post Cleanup**: تنظيف خوارزمي نهائي للنتائج  
+✅ **Post Cleanup**: تنظيف خوارزمي نهائي  
 
 ## 🧪 الاختبارات
 
 ```bash
 python run_tests.py
 pytest
-pytest -v                    # verbose
-pytest tests/test_indexer.py  # اختبار واحد
 ```
 
 ## 📈 الأداء
@@ -135,15 +130,20 @@ pytest tests/test_indexer.py  # اختبار واحد
 | AI واحد | O(1) | 1-3s |
 | AI دفعة (20) | O(1) | 3-5s (متوازي) |
 
+## 🐛 معالجة الأخطاء
+
+- API errors → إعادة محاولة تلقائية
+- Timeouts → timeout معروّف (30s)
+- Invalid JSON → معالجة خاصة
+
 ## 📝 الملاحظات
 
-- النموذج: `glm-5.1` من OpenRouter
-- معدل النجاح: 63.2% خوارزمي + ~85% مع التحقق
-- ~25 تطابق قد تحتاج مراجعة يدوية
-- الأسماء العربية: لا يتم التعامل معها في المطابقة
+1. النموذج: `glm-5.1` من OpenRouter
+2. ~25 تطابق قد تحتاج مراجعة يدوية
+3. أسماء عربية: لا يتم التعامل معها في المطابقة
 
 ## 🔗 الروابط
 
-- [GitHub Repository](https://github.com/abdalhamid19/medicompare)
-- [Issues & Discussions](https://github.com/abdalhamid19/medicompare/issues)
+- [GitHub](https://github.com/abdalhamid19/medicompare)
+- [Issues](https://github.com/abdalhamid19/medicompare/issues)
 
