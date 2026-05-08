@@ -17,10 +17,13 @@ async def run_ai_verification(
     index: DrugIndex,
     cfg: MatchingConfig,
     api_cfg: APIConfig,
+    trace=None,
 ) -> pd.DataFrame:
     """AI verification of matches below threshold."""
     if not api_cfg.api_key:
         logger.warning("No API key - skipping AI verification")
+        if trace and trace.enabled:
+            _trace_skip_all_verify(results, trace, "no_api_key")
         return results
     to_verify = _select_for_verification(results, cfg)
     if len(to_verify) == 0:
@@ -30,13 +33,22 @@ async def run_ai_verification(
         f"Phase 2: Verifying {len(to_verify)} matches "
         f"with AI (threshold={cfg.ai_verify_threshold})",
     )
+    if trace and trace.enabled:
+        for idx, row in to_verify.iterrows():
+            parsed = parse_drug(row["drug_name"])
+            score = pd.to_numeric(row["match_score"], errors="coerce")
+            trace.log_ai_verify_sent(
+                row["code"], row["drug_name"],
+                parsed.normalized, parsed.brand,
+                score, cfg.ai_verify_threshold,
+            )
     items = _build_verify_items(to_verify)
     async with AIVerifier(
         api_cfg, max_concurrent=cfg.ai_max_concurrent,
     ) as verifier:
         all_results = await _batch_verify(verifier, items, cfg)
         rejected, corrected = await _apply_verification(
-            verifier, results, index, all_results, cfg,
+            verifier, results, index, all_results, cfg, trace,
         )
         logger.info(
             f"  AI Results: "
@@ -51,10 +63,13 @@ async def run_ai_search(
     index: DrugIndex,
     cfg: MatchingConfig,
     api_cfg: APIConfig,
+    trace=None,
 ) -> pd.DataFrame:
     """AI searches for matches among unmatched items."""
     if not api_cfg.api_key:
         logger.warning("No API key - skipping AI search")
+        if trace and trace.enabled:
+            _trace_skip_all_search(results, trace, "no_api_key")
         return results
     unmatched = _get_unmatched(results)
     if len(unmatched) == 0:
@@ -68,7 +83,7 @@ async def run_ai_search(
         api_cfg, max_concurrent=cfg.ai_max_concurrent,
     ) as verifier:
         found = await _search_batch(
-            verifier, results, index, unmatched, cfg,
+            verifier, results, index, unmatched, cfg, trace,
         )
         logger.info(f"  AI Search found {found} new matches")
     return results
@@ -101,26 +116,37 @@ async def _batch_verify(verifier, items, cfg):
     return all_results
 
 
-async def _apply_verification(verifier, results, index, all_results, cfg):
+async def _apply_verification(
+    verifier, results, index, all_results, cfg, trace,
+):
     rejected = 0
     corrected = 0
     for vr in all_results:
         idx = vr.get("row_idx")
         if idx is None:
             continue
+        drug_name = results.at[idx, "drug_name"]
+        parsed = parse_drug(drug_name)
         if not vr["is_correct"]:
             c, r = await _handle_rejected(
-                verifier, results, index, idx, cfg,
+                verifier, results, index, idx, cfg, trace,
             )
             corrected += c
             rejected += r
         else:
             results.at[idx, "verified"] = "ai_confirmed"
             results.at[idx, "match_method"] = "ai_verified"
+            if trace and trace.enabled:
+                trace.log_ai_verify_result(
+                    results.at[idx, "code"], drug_name,
+                    parsed.normalized, parsed.brand,
+                    True, "ai_confirmed",
+                    "AI confirmed the algorithmic match",
+                )
     return rejected, corrected
 
 
-async def _handle_rejected(verifier, results, index, idx, cfg):
+async def _handle_rejected(verifier, results, index, idx, cfg, trace):
     drug_name = results.at[idx, "drug_name"]
     parsed = parse_drug(drug_name)
     norm = parsed.normalized
@@ -136,10 +162,26 @@ async def _handle_rejected(verifier, results, index, idx, cfg):
         ai_result = await verifier.find_better_match(drug_name, valid)
         if ai_result and ai_result.get("record"):
             _apply_correction(results, idx, ai_result)
+            if trace and trace.enabled:
+                rec = ai_result["record"]
+                trace.log_ai_verify_result(
+                    results.at[idx, "code"], drug_name,
+                    norm, parsed.brand,
+                    False, "ai_corrected",
+                    f"AI rejected original, found better: "
+                    f"{rec['product_name_en']}",
+                )
             return 1, 0
     _clear_match(results, idx)
     results.at[idx, "verified"] = "ai_rejected"
     results.at[idx, "match_method"] = "ai_verified"
+    if trace and trace.enabled:
+        trace.log_ai_verify_result(
+            results.at[idx, "code"], drug_name,
+            norm, parsed.brand,
+            False, "ai_rejected",
+            "AI rejected and no better match found",
+        )
     return 0, 1
 
 
@@ -167,7 +209,7 @@ def _get_unmatched(results):
     ].copy()
 
 
-async def _search_batch(verifier, results, index, unmatched, cfg):
+async def _search_batch(verifier, results, index, unmatched, cfg, trace):
     found = 0
     batch_size = cfg.ai_batch_size
     items = list(unmatched.iterrows())
@@ -175,26 +217,54 @@ async def _search_batch(verifier, results, index, unmatched, cfg):
         batch = items[i:i + batch_size]
         for _, row in batch:
             found += await _try_search_one(
-                verifier, results, index, row, cfg,
+                verifier, results, index, row, cfg, trace,
             )
         done = min(i + batch_size, len(items))
         logger.info(f"  Searched {done}/{len(items)}, found {found}")
     return found
 
 
-async def _try_search_one(verifier, results, index, row, cfg):
+async def _try_search_one(verifier, results, index, row, cfg, trace):
     drug_name = row["drug_name"]
     parsed = parse_drug(drug_name)
     norm = parsed.normalized
+    code = str(row.get("code", ""))
     if not norm or len(norm) < 3:
+        if trace and trace.enabled:
+            trace.log_ai_skip(
+                code, drug_name, norm, parsed.brand,
+                "search", "norm too short for AI search",
+            )
         return 0
     candidates = _search_candidates(parsed, norm, index, cfg)
     if not candidates:
+        if trace and trace.enabled:
+            trace.log_ai_skip(
+                code, drug_name, norm, parsed.brand,
+                "search", "no valid candidates found",
+            )
         return 0
+    if trace and trace.enabled:
+        trace.log_ai_search_sent(
+            code, drug_name, norm, parsed.brand,
+            len(candidates),
+        )
     ai_result = await verifier.find_better_match(drug_name, candidates)
-    if ai_result and ai_result.get("record") and ai_result.get("confidence", 0) >= 0.7:
+    confidence = ai_result.get("confidence", 0) if ai_result else 0
+    if ai_result and ai_result.get("record") and confidence >= 0.7:
+        match_name = ai_result["record"]["product_name_en"]
         _apply_search_result(results, row.name, ai_result)
+        if trace and trace.enabled:
+            trace.log_ai_search_result(
+                code, drug_name, norm, parsed.brand,
+                True, match_name, confidence,
+            )
         return 1
+    if trace and trace.enabled:
+        trace.log_ai_search_result(
+            code, drug_name, norm, parsed.brand,
+            False, None, confidence,
+        )
     return 0
 
 
@@ -241,3 +311,32 @@ def _apply_search_result(results, idx, ai_result):
     results.at[idx, "match_score"] = round(ai_result.get("score", 0), 1)
     results.at[idx, "verified"] = "ai_found"
     results.at[idx, "match_method"] = "ai_search"
+
+
+def _trace_skip_all_verify(results, trace, reason):
+    """Log AI verify skip for all eligible drugs."""
+    matched = results[results["matched_product_name_en"] != ""]
+    scores = pd.to_numeric(matched["match_score"], errors="coerce")
+    eligible = matched[scores < 90]
+    for idx, row in eligible.iterrows():
+        parsed = parse_drug(row["drug_name"])
+        trace.log_ai_skip(
+            row["code"], row["drug_name"],
+            parsed.normalized, parsed.brand,
+            "verify", reason,
+        )
+
+
+def _trace_skip_all_search(results, trace, reason):
+    """Log AI search skip for all unmatched drugs."""
+    unmatched = results[
+        (results["matched_product_name_en"].isna()) |
+        (results["matched_product_name_en"] == "")
+    ]
+    for idx, row in unmatched.iterrows():
+        parsed = parse_drug(row["drug_name"])
+        trace.log_ai_skip(
+            row["code"], row["drug_name"],
+            parsed.normalized, parsed.brand,
+            "search", reason,
+        )

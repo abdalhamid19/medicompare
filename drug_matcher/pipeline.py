@@ -93,30 +93,61 @@ class MatchPipeline:
         if not self._trace or not self._trace.enabled:
             return self._index.best_match(drug_name)
         code = str(row.code)
-        rec, score, method, trace = self._index.best_match_detailed(drug_name)
+        rec, score, method, trace = (
+            self._index.best_match_detailed(drug_name)
+        )
+        parsed = parse_drug(drug_name)
         self._trace.log_normalization(
             code, drug_name, trace["norm"], trace["brand"],
+            parsed.dosage_nums, parsed.form,
         )
         self._trace.log_brand_lookup(
             code, drug_name, trace["norm"],
             trace["brand"], trace["brand_hits"],
+            self._index,
         )
         for scorer_name, result in trace["fuzzy_steps"]:
             self._trace.log_fuzzy_step(
                 code, drug_name, trace["norm"],
                 trace["brand"], scorer_name, result,
+                self._cfg.fuzzy_threshold, self._index,
             )
         for cidx, ok, reason in trace["component_checks"]:
             self._trace.log_component_check(
                 code, drug_name, trace["norm"],
                 trace["brand"], cidx, ok, reason,
+                self._index,
             )
         match_name = rec["product_name_en"] if rec else None
+        ai_eligible, ai_reason = self._ai_eligibility(
+            rec, score, method, trace["norm"],
+        )
         self._trace.log_final(
             code, drug_name, trace["norm"],
             trace["brand"], match_name, score, method,
+            ai_eligible, ai_reason,
         )
         return rec, score, method
+
+    def _ai_eligibility(self, rec, score, method, norm):
+        """Determine if this drug will go to AI and why."""
+        if rec is None:
+            if not norm or len(norm) < 3:
+                return "none", "no_match + norm too short for AI"
+            return "search", (
+                "no_match -> eligible for AI search"
+            )
+        if score < self._cfg.ai_verify_threshold:
+            return "verify", (
+                f"score={round(score,1)} "
+                f"< ai_threshold={self._cfg.ai_verify_threshold}"
+                f" -> eligible for AI verify"
+            )
+        return "none", (
+            f"score={round(score,1)} "
+            f">= ai_threshold={self._cfg.ai_verify_threshold}"
+            f" -> strong match, no AI needed"
+        )
 
     def _make_row(self, row, rec, score, method, stats):
         code = str(row.code)
@@ -160,6 +191,7 @@ class MatchPipeline:
         self._require_results()
         self._results = await run_ai_verification(
             self._results, self._index, self._cfg, self._api_cfg,
+            trace=self._trace,
         )
         return self._results
 
@@ -168,6 +200,7 @@ class MatchPipeline:
         self._require_results()
         self._results = await run_ai_search(
             self._results, self._index, self._cfg, self._api_cfg,
+            trace=self._trace,
         )
         return self._results
 
