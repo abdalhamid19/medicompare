@@ -311,12 +311,14 @@ class MatchPipeline:
         self, drugs_path: str | None = None,
         tawreed_path: str | None = None,
         output_path: str | None = None,
+        skip_ai: bool = False,
     ) -> pd.DataFrame:
         """Run the complete pipeline."""
         self.load_data(drugs_path, tawreed_path)
         self.run_matching()
-        await self.run_ai_verification()
-        await self.run_ai_search_unmatched()
+        if not skip_ai:
+            await self.run_ai_verification()
+            await self.run_ai_search_unmatched()
         self.run_post_cleanup()
         self.save(output_path)
         self.print_stats()

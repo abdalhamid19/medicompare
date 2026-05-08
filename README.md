@@ -76,6 +76,7 @@ python run_tests.py
 | `--ai-threshold` | حد إحالة المطابقات للـ AI | 90.0 |
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 | `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
+| `--no-ai` | تخطي AI (مطابقة خوارزمية فقط بدون تحقق أو بحث) | معطل |
 
 ## 📁 الهيكل
 

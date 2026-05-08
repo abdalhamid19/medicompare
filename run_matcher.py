@@ -14,6 +14,7 @@ def parse_args():
     parser.add_argument("--ai-threshold", type=float, default=90.0, help="AI verification threshold (default: 90)")
     parser.add_argument("--output", default=None, help="Output CSV path")
     parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
+    parser.add_argument("--no-ai", action="store_true", help="Skip AI verification and search (algorithm only)")
     return parser.parse_args()
 
 
@@ -40,7 +41,7 @@ def main():
     if args.trace:
         from drug_matcher.trace_log import MatchTraceLog
         pipeline._trace = MatchTraceLog(enabled=True)
-    result = asyncio.run(pipeline.run_full(output_path=args.output))
+    result = asyncio.run(pipeline.run_full(output_path=args.output, skip_ai=args.no_ai))
 
     return result
 
