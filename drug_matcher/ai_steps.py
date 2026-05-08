@@ -131,7 +131,7 @@ async def _apply_verification(
         parsed = parse_drug(drug_name)
         if not vr["is_correct"]:
             c, r = await _handle_rejected(
-                verifier, results, index, idx, cfg, trace,
+                verifier, results, index, idx, cfg, trace, vr,
             )
             corrected += c
             rejected += r
@@ -144,11 +144,14 @@ async def _apply_verification(
                     parsed.normalized, parsed.brand,
                     True, "ai_confirmed",
                     "AI confirmed the algorithmic match",
+                    results.at[idx, "matched_product_name_en"],
+                    vr.get("confidence"), vr.get("reason", ""),
+                    "",
                 )
     return rejected, corrected
 
 
-async def _handle_rejected(verifier, results, index, idx, cfg, trace):
+async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
     drug_name = results.at[idx, "drug_name"]
     parsed = parse_drug(drug_name)
     norm = parsed.normalized
@@ -172,6 +175,10 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace):
                     False, "ai_corrected",
                     f"AI rejected original, found better: "
                     f"{rec['product_name_en']}",
+                    results.at[idx, "matched_product_name_en"],
+                    ai_result.get("confidence"),
+                    ai_result.get("reason", ""),
+                    rec["product_name_en"],
                 )
             return 1, 0
     _clear_match(results, idx)
@@ -183,6 +190,9 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace):
             norm, parsed.brand,
             False, "ai_rejected",
             "AI rejected and no better match found",
+            results.at[idx, "matched_product_name_en"],
+            vr.get("confidence"), vr.get("reason", ""),
+            "",
         )
     return 0, 1
 

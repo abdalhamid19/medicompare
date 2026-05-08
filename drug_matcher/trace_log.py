@@ -184,6 +184,8 @@ class MatchTraceLog:
     def log_ai_verify_result(
         self, code, name, norm, brand,
         is_correct, ai_action, detail,
+        matched_name, confidence, ai_reason,
+        corrected_to,
     ):
         if not self._enabled:
             return
@@ -191,10 +193,16 @@ class MatchTraceLog:
         row["step"] = "ai_verify_result"
         row["ai_phase"] = "verify"
         row["ai_result"] = ai_action
+        row["candidate_name"] = matched_name or ""
+        row["score"] = round(confidence, 2) if confidence else ""
         row["selection_reason"] = (
             f"AI_says={'correct' if is_correct else 'incorrect'}"
-            f" action={ai_action} detail={detail}"
+            f" confidence={round(confidence, 2) if confidence else 'N/A'}"
+            f" reason='{ai_reason}'"
+            f" action={ai_action}"
         )
+        if corrected_to:
+            row["component_reason"] = f"corrected_to={corrected_to}"
         self._rows.append(row)
 
     def log_ai_search_sent(
@@ -344,8 +352,16 @@ class MatchTraceLog:
         elif step == "ai_verify_result":
             f.write(
                 f"  [AI VERIFY] result={row['ai_result']}  "
-                f"{row['selection_reason']}\n",
+                f"verifying='{row['candidate_name']}'  "
+                f"confidence={row['score']}\n",
             )
+            f.write(
+                f"     {row['selection_reason']}\n",
+            )
+            if row.get('component_reason'):
+                f.write(
+                    f"     {row['component_reason']}\n",
+                )
         elif step == "ai_search_sent":
             f.write(
                 f"  [AI SEARCH] sent with {row['selection_reason']}\n"
