@@ -28,7 +28,7 @@ class MatchingConfig:
 @dataclass(frozen=True)
 class APIConfig:
     api_key: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_API_KEY", ""))
-    base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+    base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://agentrouter.org/v1"))
     model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "glm-5.1"))
     max_tokens: int = 1024
     temperature: float = 0.1
@@ -47,4 +47,4 @@ def load_env(path: Path | None = None):
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
                 k, v = line.split("=", 1)
-                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+                os.environ[k.strip()] = v.strip().strip('"').strip("'")
