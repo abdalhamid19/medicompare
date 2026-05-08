@@ -24,10 +24,11 @@ BENCHMARK_CASES = [
     ("GLUCOPHAGE 500 MG 30 TAB", "GLUCOPHAGE 500 MG 30 TABLETS", True, "same"),
     ("LIPITOR 10 MG 30 TAB", "LIPITOR 10 MG 30 TABS.", True, "same"),
     ("AUGMENTIN 625 MG 14 TAB", "AUGMENTIN 625 MG 14 TABS", True, "same"),
+    ("CALCIMA 30 PICS", "CALCIMA 30 SOFT CHEWS PIECES", True, "same"),
+    ("ACETYLCISTEINE 600 MG 10 SACHETS", "ACETYLCISTEIN 600 MG 10 EFF. INSTANT GRAN. SACHETS", True, "same"),
 
     # --- Should be INCORRECT (different drug) ---
     ("GREEN TEA", "GREENTAL 30 CAP", False, "different"),
-    ("CALCIMA 30 PICS", "CALCIMA 30 SOFT CHEWS PIECES", False, "different"),
     ("PANADOL 20 TAB", "PANADOL EXTRA 24 TAB", False, "different"),
     ("AMOXIL 500 MG 10 CAP", "AMOXIL 250 MG 10 CAP", False, "different"),
     ("VOLTAREN 50 MG 20 TAB", "VOLTAREN 75 MG 20 TAB", False, "different"),
@@ -35,7 +36,6 @@ BENCHMARK_CASES = [
     ("LIPITOR 10 MG 30 TAB", "LIPITOR 20 MG 30 TAB", False, "different"),
     ("IBUPROFEN 400 MG 20 TAB", "IBUPROFEN 600 MG 20 TAB", False, "different"),
     ("PANADOL NIGHT 20 TAB", "PANADOL 20 TAB", False, "different"),
-    ("ACETYLCISTEINE 600 MG 10 SACHETS", "ACETYLCISTEIN 600 MG 10 EFF. INSTANT GRAN. SACHETS", False, "different"),
 
     # --- Tricky / edge cases ---
     ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN 30 CAPS", True, "same"),

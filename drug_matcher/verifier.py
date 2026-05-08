@@ -23,6 +23,8 @@ OK differences (minor formatting only):
 - "F.C.TAB" vs "TAB", "SACHETS" vs "SACHET", spaces, dots, hyphens
 - Additional descriptive words that don't change the product (e.g. manufacturer name, "I.M./I.V." route)
 - "EFF. GRAN. SACHETS" vs "SACHETS" (same form, different description)
+- "PICS" vs "PIECES" vs "SOFT CHEWS PIECES" (same form, different wording)
+- "CAPS" vs "CAPSULES", "TABS" vs "TABLETS", "TAB" vs "TABS."
 
 Respond in JSON only:
 {"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}
@@ -37,7 +39,7 @@ Is this the SAME product? Respond in JSON only."""
 
 
 def _extract_json(text: str) -> dict | None:
-    """Extract JSON from model response, handling markdown code blocks."""
+    """Extract JSON from model response, handling markdown code blocks and truncation."""
     # Try direct parse
     try:
         return json.loads(text)
@@ -57,6 +59,26 @@ def _extract_json(text: str) -> dict | None:
             return json.loads(m.group(0))
         except (json.JSONDecodeError, ValueError):
             pass
+    # Handle truncated JSON: find opening { and try to close it
+    start = text.find("{")
+    if start >= 0:
+        fragment = text[start:]
+        # Try adding closing braces
+        for suffix in ["}", "\"}", "\"\n}"]:
+            try:
+                return json.loads(fragment + suffix)
+            except (json.JSONDecodeError, ValueError):
+                continue
+        # Last resort: extract key-value pairs with regex
+        is_correct_m = re.search(r'"is_correct"\s*:\s*(true|false)', fragment, re.IGNORECASE)
+        reason_m = re.search(r'"reason"\s*:\s*"([^"]*)"', fragment)
+        confidence_m = re.search(r'"confidence"\s*:\s*([\d.]+)', fragment)
+        if is_correct_m:
+            return {
+                "is_correct": is_correct_m.group(1).lower() == "true",
+                "reason": reason_m.group(1) if reason_m else "",
+                "confidence": float(confidence_m.group(1)) if confidence_m else 0.5,
+            }
     return None
 
 
