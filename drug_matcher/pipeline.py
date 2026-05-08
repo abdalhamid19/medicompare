@@ -1,5 +1,6 @@
 """Pipeline orchestrator - coordinates matching, verification, and output."""
 import asyncio
+import logging
 import re
 import sys
 from typing import Any
@@ -9,6 +10,8 @@ import pandas as pd
 from rapidfuzz import fuzz, process
 
 from .config import MatchingConfig, APIConfig, Paths, load_env
+
+logger = logging.getLogger("medicompare")
 from .normalizer import normalize, parse_drug, components_match
 from .indexer import DrugIndex
 from .verifier import AIVerifier
@@ -17,16 +20,18 @@ from .verifier import AIVerifier
 class MatchPipeline:
     """Full matching pipeline with optional AI verification."""
 
-    __slots__ = ("_cfg", "_api_cfg", "_drugs_df", "_index", "_verifier", "_results")
+    __slots__ = ("_cfg", "_api_cfg", "_drugs_df", "_index", "_verifier", "_results", "_limit")
 
     def __init__(
         self,
         cfg: MatchingConfig | None = None,
         api_cfg: APIConfig | None = None,
+        limit: int | None = None,
     ):
         load_env()
         self._cfg = cfg or MatchingConfig()
         self._api_cfg = api_cfg or APIConfig()
+        self._limit = limit
         self._drugs_df: pd.DataFrame | None = None
         self._index: DrugIndex | None = None
         self._verifier: AIVerifier | None = None
@@ -43,9 +48,12 @@ class MatchPipeline:
 
         tawreed = pd.read_csv(tawreed_path, encoding="utf-8-sig")
 
+        if self._limit:
+            drugs = drugs.head(self._limit)
+            logger.info(f"Limit applied: processing {len(drugs)} drugs")
         self._drugs_df = drugs
         self._index = DrugIndex(tawreed, self._cfg)
-        print(f"Loaded {len(drugs)} drugs, {self._index.size} tawreed products")
+        logger.info(f"Loaded {len(drugs)} drugs, {self._index.size} tawreed products")
 
     def run_matching(self) -> pd.DataFrame:
         """Phase 1: Algorithmic matching using brand index + fuzzy search."""
@@ -89,9 +97,9 @@ class MatchPipeline:
                 stats["no_match"] += 1
 
         self._results = pd.DataFrame(results)
-        print(f"Phase 1 done: {stats}")
+        logger.info(f"Phase 1 done: {stats}")
         matched = self._results[self._results["matched_product_name_en"] != ""]
-        print(f"  Matched: {len(matched)}, Not matched: {len(self._results) - len(matched)}")
+        logger.info(f"  Matched: {len(matched)}, Not matched: {len(self._results) - len(matched)}")
         return self._results
 
     async def run_ai_verification(self) -> pd.DataFrame:
@@ -100,7 +108,7 @@ class MatchPipeline:
             raise RuntimeError("Call run_matching() first")
 
         if not self._api_cfg.api_key:
-            print("No API key - skipping AI verification")
+            logger.warning("No API key - skipping AI verification")
             return self._results
 
         # Select matches to verify (below threshold)
@@ -109,10 +117,10 @@ class MatchPipeline:
         to_verify = matched[scores < self._cfg.ai_verify_threshold]
 
         if len(to_verify) == 0:
-            print("No matches below AI verification threshold")
+            logger.info("No matches below AI verification threshold")
             return self._results
 
-        print(f"Phase 2: Verifying {len(to_verify)} matches with AI (threshold={self._cfg.ai_verify_threshold})")
+        logger.info(f"Phase 2: Verifying {len(to_verify)} matches with AI (threshold={self._cfg.ai_verify_threshold})")
 
         # Build verification batches
         verify_items = []
@@ -128,9 +136,7 @@ class MatchPipeline:
                 batch_results = await verifier.verify_batch(batch)
                 all_results.extend(batch_results)
                 done = min(i + batch_size, len(verify_items))
-                print(f"  Verified {done}/{len(verify_items)}", end="\r")
-
-            print()
+                logger.info(f"  Verified {done}/{len(verify_items)}")
 
             # Apply results
             rejected = 0
@@ -180,7 +186,7 @@ class MatchPipeline:
                     self._results.at[idx, "verified"] = "ai_confirmed"
                     self._results.at[idx, "match_method"] = "ai_verified"
 
-            print(f"  AI Results: confirmed={len(all_results)-rejected-corrected}, corrected={corrected}, rejected={rejected}")
+            logger.info(f"  AI Results: confirmed={len(all_results)-rejected-corrected}, corrected={corrected}, rejected={rejected}")
 
         return self._results
 
@@ -190,7 +196,7 @@ class MatchPipeline:
             raise RuntimeError("Call run_matching() first")
 
         if not self._api_cfg.api_key:
-            print("No API key - skipping AI search")
+            logger.warning("No API key - skipping AI search")
             return self._results
 
         unmatched = self._results[
@@ -199,10 +205,10 @@ class MatchPipeline:
         ].copy()
 
         if len(unmatched) == 0:
-            print("No unmatched items to search")
+            logger.info("No unmatched items to search")
             return self._results
 
-        print(f"Phase 3: AI searching for matches among {len(unmatched)} unmatched items")
+        logger.info(f"Phase 3: AI searching for matches among {len(unmatched)} unmatched items")
 
         async with AIVerifier(self._api_cfg, max_concurrent=self._cfg.ai_max_concurrent) as verifier:
             found = 0
@@ -262,9 +268,9 @@ class MatchPipeline:
                         found += 1
 
                 done = min(i + batch_size, len(items))
-                print(f"  Searched {done}/{len(items)}, found {found}", end="\r")
+                logger.info(f"  Searched {done}/{len(items)}, found {found}")
 
-            print(f"\n  AI Search found {found} new matches")
+            logger.info(f"  AI Search found {found} new matches")
 
         return self._results
 
@@ -301,7 +307,7 @@ class MatchPipeline:
                 self._results.at[idx, "match_method"] = np.nan
                 removed += 1
 
-        print(f"Post-cleanup: removed {removed} wrong matches")
+        logger.info(f"Post-cleanup: removed {removed} wrong matches")
         return self._results
 
     def save(self, output_path: str | None = None) -> str:
@@ -310,7 +316,7 @@ class MatchPipeline:
             raise RuntimeError("No results to save")
         path = output_path or str(Paths().output_csv)
         self._results.to_csv(path, index=False, encoding="utf-8-sig")
-        print(f"Saved to {path}")
+        logger.info(f"Saved to {path}")
         return path
 
     def print_stats(self):
@@ -323,28 +329,28 @@ class MatchPipeline:
         matched = self._results[has_match]
         not_matched = self._results[~has_match]
 
-        print(f"\n{'='*50}")
-        print(f"FINAL RESULTS")
-        print(f"{'='*50}")
-        print(f"Total drugs: {total}")
-        print(f"Matched: {len(matched)} ({len(matched)/total*100:.1f}%)")
-        print(f"Not matched: {len(not_matched)} ({len(not_matched)/total*100:.1f}%)")
+        logger.info(f"{'='*50}")
+        logger.info(f"FINAL RESULTS")
+        logger.info(f"{'='*50}")
+        logger.info(f"Total drugs: {total}")
+        logger.info(f"Matched: {len(matched)} ({len(matched)/total*100:.1f}%)")
+        logger.info(f"Not matched: {len(not_matched)} ({len(not_matched)/total*100:.1f}%)")
 
         if len(matched) > 0:
             scores = pd.to_numeric(matched["match_score"], errors="coerce")
-            print(f"\nScore distribution:")
-            print(f"  100:   {(scores == 100).sum()}")
-            print(f"  95-99: {((scores >= 95) & (scores < 100)).sum()}")
-            print(f"  90-94: {((scores >= 90) & (scores < 95)).sum()}")
-            print(f"  80-89: {((scores >= 80) & (scores < 90)).sum()}")
-            print(f"  70-79: {((scores >= 70) & (scores < 80)).sum()}")
-            print(f"  <70:   {(scores < 70).sum()}")
+            logger.info(f"Score distribution:")
+            logger.info(f"  100:   {(scores == 100).sum()}")
+            logger.info(f"  95-99: {((scores >= 95) & (scores < 100)).sum()}")
+            logger.info(f"  90-94: {((scores >= 90) & (scores < 95)).sum()}")
+            logger.info(f"  80-89: {((scores >= 80) & (scores < 90)).sum()}")
+            logger.info(f"  70-79: {((scores >= 70) & (scores < 80)).sum()}")
+            logger.info(f"  <70:   {(scores < 70).sum()}")
 
-        print(f"\nVerification breakdown:")
-        print(self._results["verified"].value_counts(dropna=False).to_string())
+        logger.info(f"Verification breakdown:")
+        logger.info(self._results["verified"].value_counts(dropna=False).to_string())
 
-        print(f"\nMethod breakdown:")
-        print(self._results["match_method"].value_counts(dropna=False).to_string())
+        logger.info(f"Method breakdown:")
+        logger.info(self._results["match_method"].value_counts(dropna=False).to_string())
 
     async def run_full(self, drugs_path: str | None = None, tawreed_path: str | None = None, output_path: str | None = None) -> pd.DataFrame:
         """Run the complete pipeline."""

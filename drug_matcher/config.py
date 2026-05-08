@@ -1,7 +1,17 @@
 """Configuration - single source of truth for all settings."""
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger("medicompare")
+
+
+def setup_logging(level: str = "INFO"):
+    """Configure logging for the medicompare package."""
+    fmt = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    datefmt = "%H:%M:%S"
+    logging.basicConfig(level=getattr(logging, level.upper(), logging.INFO), format=fmt, datefmt=datefmt)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -25,9 +35,9 @@ class APIConfig:
 
 @dataclass(frozen=True)
 class Paths:
-    drugs_csv: Path = field(default_factory=lambda: BASE_DIR / "all_non_cosmotics_drug_all.csv")
-    tawreed_csv: Path = field(default_factory=lambda: BASE_DIR / "tawreed_products.csv")
-    output_csv: Path = field(default_factory=lambda: BASE_DIR / "matched_drugs_verified.csv")
+    drugs_csv: Path = field(default_factory=lambda: BASE_DIR / "input" / "all_non_cosmotics_drug_all.csv")
+    tawreed_csv: Path = field(default_factory=lambda: BASE_DIR / "input" / "tawreed_products.csv")
+    output_csv: Path = field(default_factory=lambda: BASE_DIR / "output" / "matched_drugs_verified.csv")
     env_file: Path = field(default_factory=lambda: BASE_DIR / ".env")
 
 def load_env(path: Path | None = None):

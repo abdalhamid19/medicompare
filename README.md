@@ -28,17 +28,42 @@ AGENT_ROUTER_MODEL=glm-5.1
 ### التشغيل
 
 ```bash
-# مطابقة خوارزمية فقط
+# مطابقة كاملة (خوارزمية + AI)
 python run_matcher.py
-# → output/matched_drugs.csv
 
-# مطابقة + تحقق AI
+# مطابقة خوارزمية فقط (بدون AI)
 python run_ai_verify.py
-# → output/matched_drugs_verified.csv
+
+# تحديد عدد الأدوية (--limit)
+python run_matcher.py --limit 50
+python run_ai_verify.py --limit 100
+
+# مستوى التفصيل في السجلات (--log-level)
+python run_matcher.py --log-level DEBUG
+python run_ai_verify.py --log-level WARNING
+
+# تغيير حد المطابقة (--threshold) وحد التحقق بالـ AI (--ai-threshold)
+python run_matcher.py --threshold 85 --ai-threshold 95
+
+# تحديد ملف الإخراج (--output)
+python run_matcher.py --output output/my_results.csv
+
+# تشغيل تجريبي سريع
+python run_matcher.py --limit 10 --log-level DEBUG
 
 # اختبارات
 python run_tests.py
 ```
+
+### خيارات سطر الأوامر
+
+| الخيار | الوصف | الافتراضي |
+|---|---|---|
+| `--limit N` | معالجة أول N دواء فقط | الكل |
+| `--log-level` | مستوى السجلات (DEBUG, INFO, WARNING, ERROR) | INFO |
+| `--threshold` | حد المطابقة الخوارزمية | 80 |
+| `--ai-threshold` | حد إحالة المطابقات للـ AI | 90.0 |
+| `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 
 ## 📁 الهيكل
 

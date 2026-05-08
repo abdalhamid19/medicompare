@@ -44,7 +44,7 @@ _DOSAGE_RE = re.compile(r"(\d+(?:\.\d+)?(?:\s\d{3})?)\s*(MG|MCG|I\s*U|IU|%)(?=$|
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(r"(\d+)\s*(TAB|TABS|CAP|CAPS|SACHET|SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|PACKETS)\b", re.IGNORECASE)
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
-_NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*")
+_NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*(IMP|IMPORTED)?\s*", re.IGNORECASE)
 
 def normalize(name: str) -> str:
     if not name or not isinstance(name, str):
