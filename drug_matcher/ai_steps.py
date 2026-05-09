@@ -95,7 +95,7 @@ async def run_ai_review(
         api_cfg, max_concurrent=cfg.ai_max_concurrent,
     ) as verifier:
         all_results = await _batch_review(verifier, items, cfg)
-        overridden = _apply_review_results(
+        overridden = await _apply_review_results(
             verifier, results, index, all_results, cfg, trace,
         )
         logger.info(

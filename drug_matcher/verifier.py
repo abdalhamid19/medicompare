@@ -26,7 +26,14 @@ OK differences (minor formatting only):
 - "PICS" vs "PIECES" vs "SOFT CHEWS PIECES" (same form, different wording)
 - "CAPS" vs "CAPSULES", "TABS" vs "TABLETS", "TAB" vs "TABS."
 
-Respond in JSON only:
+CRITICAL: You MUST include a "confidence" field in your JSON response. This is REQUIRED, not optional.
+- confidence = 1.0 if you are absolutely certain (all fields match perfectly)
+- confidence = 0.8-0.9 if you are fairly sure but there is minor ambiguity
+- confidence = 0.5-0.7 if you are unsure or it is a borderline case
+- confidence = 0.0-0.4 if you are very uncertain
+NEVER return confidence = 0.0 unless you are completely uncertain.
+
+Respond in JSON only (ALL three fields are MANDATORY):
 {"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}
 """
 
@@ -35,7 +42,7 @@ VERIFY_PROMPT = """Verify this drug match:
 DRUG A (from inventory): {drug_a}
 DRUG B (from tawreed): {drug_b}
 
-Is this the SAME product? Respond in JSON only."""
+Is this the SAME product? You MUST respond with JSON containing ALL three fields: is_correct, reason, and confidence (0.0-1.0)."""
 
 
 def _extract_json(text: str) -> dict | None:
@@ -171,10 +178,15 @@ class AIVerifier:
                                 "reason": content[:200],
                                 "confidence": 0.5,
                             }
+                        confidence = float(result.get("confidence", 0.0))
+                        # Fallback: if model returned 0.0 but gave a clear answer,
+                        # assign a default confidence so review phase works properly
+                        if confidence == 0.0:
+                            confidence = 0.7 if bool(result.get("is_correct", False)) else 0.6
                         return {
                             "is_correct": bool(result.get("is_correct", False)),
                             "reason": str(result.get("reason", "")),
-                            "confidence": float(result.get("confidence", 0.0)),
+                            "confidence": confidence,
                         }
                 except Exception as e:
                     if attempt < max_retries:
