@@ -8,7 +8,7 @@ import pandas as pd
 from .config import MatchingConfig, APIConfig, Paths, load_env
 from .normalizer import parse_drug, components_match
 from .indexer import DrugIndex
-from .ai_steps import run_ai_verification, run_ai_search
+from .ai_steps import run_ai_verification, run_ai_search, run_ai_review
 from .trace_log import MatchTraceLog
 
 logger = logging.getLogger("medicompare")
@@ -16,7 +16,7 @@ logger = logging.getLogger("medicompare")
 _RESULT_COLS = [
     "code", "drug_name", "matched_product_name_en",
     "matched_product_name_ar", "matched_store_product_id",
-    "match_score", "verified", "match_method",
+    "match_score", "verified", "match_method", "ai_confidence", "ai_review_confidence",
 ]
 
 
@@ -163,6 +163,8 @@ class MatchPipeline:
                 "match_score": round(score, 1),
                 "verified": "algo_match",
                 "match_method": method,
+                "ai_confidence": "",
+                "ai_review_confidence": "",
             }
         stats["no_match"] += 1
         return {
@@ -172,6 +174,8 @@ class MatchPipeline:
             "matched_store_product_id": "",
             "match_score": "", "verified": "",
             "match_method": method,
+            "ai_confidence": "",
+            "ai_review_confidence": "",
         }
 
     def _log_match_counts(self):
@@ -199,6 +203,15 @@ class MatchPipeline:
         """AI searches for matches among unmatched items."""
         self._require_results()
         self._results = await run_ai_search(
+            self._results, self._index, self._cfg, self._api_cfg,
+            trace=self._trace,
+        )
+        return self._results
+
+    async def run_ai_review(self) -> pd.DataFrame:
+        """AI review: second model cross-verifies low-confidence AI decisions."""
+        self._require_results()
+        self._results = await run_ai_review(
             self._results, self._index, self._cfg, self._api_cfg,
             trace=self._trace,
         )
@@ -319,6 +332,7 @@ class MatchPipeline:
         if not skip_ai:
             await self.run_ai_verification()
             await self.run_ai_search_unmatched()
+            await self.run_ai_review()
         self.run_post_cleanup()
         self.save(output_path)
         self.print_stats()

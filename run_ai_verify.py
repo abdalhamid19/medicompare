@@ -16,6 +16,8 @@ def parse_args():
     parser.add_argument("--model", default=None, help="AI model to use (e.g. openai/gpt-4o-mini, big-pickle)")
     parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()), help="API provider (openrouter, opencode, agentrouter, custom)")
     parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
+    parser.add_argument("--review-model", default=None, help="Second AI model for cross-review (e.g. big-pickle)")
+    parser.add_argument("--review-threshold", type=float, default=None, help="Review AI decisions with confidence below this (default: 1.0)")
     return parser.parse_args()
 
 
@@ -31,6 +33,7 @@ async def main():
         ai_batch_size=20,
         ai_max_concurrent=5,
         top_k_candidates=10,
+        ai_review_threshold=args.review_threshold if args.review_threshold is not None else 1.0,
     )
     resolved = resolve_api_config(
         provider=args.provider or "",
@@ -41,6 +44,7 @@ async def main():
         api_key=resolved["api_key"],
         base_url=resolved["base_url"],
         model=resolved["model"],
+        review_model=args.review_model or "",
         max_tokens=512,
         temperature=0.1,
     )
@@ -53,6 +57,7 @@ async def main():
     pipeline.run_matching()
     await pipeline.run_ai_verification()
     await pipeline.run_ai_search_unmatched()
+    await pipeline.run_ai_review()
     pipeline.run_post_cleanup()
     pipeline.save(args.output)
     pipeline.print_stats()

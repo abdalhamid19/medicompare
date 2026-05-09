@@ -197,6 +197,90 @@ class AIVerifier:
                 out.append(r)
         return out
 
+    async def review_one(
+        self, drug_a: str, drug_b: str,
+        first_decision: str, first_confidence: float, first_reason: str,
+    ) -> dict[str, Any]:
+        """Ask a second model to review the first AI's decision.
+        Returns {is_correct, reason, confidence}."""
+        review_model = self._cfg.review_model
+        if not review_model or not self._cfg.api_key:
+            return {"is_correct": True, "reason": "no_review_model", "confidence": first_confidence}
+
+        prompt = f"""Review this AI decision about a drug match:
+
+DRUG A (from inventory): {drug_a}
+DRUG B (from tawreed): {drug_b}
+
+First AI decided: {"CORRECT match" if first_decision == "ai_confirmed" else "INCORRECT match"}
+First AI confidence: {first_confidence}
+First AI reason: {first_reason}
+
+Do you AGREE with the first AI? Apply the same strict pharmaceutical matching rules.
+Respond in JSON only:
+{{"agree": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}}"""
+
+        payload = {
+            "model": review_model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": self._cfg.max_tokens,
+            "temperature": self._cfg.temperature,
+            "response_format": {"type": "json_object"},
+        }
+
+        max_retries = 3
+        for attempt in range(max_retries + 1):
+            async with self._semaphore:
+                try:
+                    async with self._session.post(
+                        f"{self._cfg.base_url}/chat/completions",
+                        json=payload,
+                    ) as resp:
+                        if resp.status == 429 and attempt < max_retries:
+                            retry_after = int(resp.headers.get("Retry-After", "10"))
+                            await asyncio.sleep(retry_after + attempt * 2)
+                            continue
+                        if resp.status != 200:
+                            return {"is_correct": True, "reason": f"review_api_error_{resp.status}", "confidence": first_confidence}
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"]
+                        result = _extract_json(content)
+                        if result is None:
+                            return {"is_correct": True, "reason": "review_parse_failed", "confidence": first_confidence}
+                        agree = bool(result.get("agree", True))
+                        return {
+                            "is_correct": agree if first_decision == "ai_confirmed" else not agree,
+                            "reason": str(result.get("reason", "")),
+                            "confidence": float(result.get("confidence", first_confidence)),
+                        }
+                except Exception as e:
+                    if attempt < max_retries:
+                        await asyncio.sleep(2 + attempt * 2)
+                        continue
+                    return {"is_correct": True, "reason": f"review_exception:{type(e).__name__}", "confidence": first_confidence}
+        return {"is_correct": True, "reason": "review_max_retries", "confidence": first_confidence}
+
+    async def review_batch(
+        self, items: list[tuple[str, str, str, float, str, int]]
+    ) -> list[dict[str, Any]]:
+        """Review a batch of first-AI decisions. Each item is (drug_a, drug_b, first_decision, first_confidence, first_reason, row_index)."""
+        tasks = [
+            self.review_one(a, b, d, c, r)
+            for a, b, d, c, r, _ in items
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        out = []
+        for i, r in enumerate(results):
+            if isinstance(r, Exception):
+                out.append({"is_correct": True, "reason": f"review_exception:{r}", "confidence": items[i][3], "row_idx": items[i][5]})
+            else:
+                r["row_idx"] = items[i][5]
+                out.append(r)
+        return out
+
     async def find_better_match(
         self, drug_name: str, candidates: list[tuple[dict, float, int]]
     ) -> dict[str, Any] | None:

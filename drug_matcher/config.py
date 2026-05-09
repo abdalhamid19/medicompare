@@ -2,6 +2,7 @@
 import logging
 import os
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger("medicompare")
@@ -24,6 +25,7 @@ class MatchingConfig:
     ai_batch_size: int = 20
     ai_max_concurrent: int = 5
     top_k_candidates: int = 10
+    ai_review_threshold: float = 1.0  # review AI decisions with confidence below this
 
 PROVIDERS = {
     "openrouter": {
@@ -70,6 +72,7 @@ class APIConfig:
     api_key: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_API_KEY", ""))
     base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
     model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini"))
+    review_model: str = field(default_factory=lambda: os.getenv("REVIEW_MODEL", ""))
     max_tokens: int = 1024
     temperature: float = 0.1
 
@@ -77,7 +80,7 @@ class APIConfig:
 class Paths:
     drugs_csv: Path = field(default_factory=lambda: BASE_DIR / "input" / "all_non_cosmotics_drug_all.csv")
     tawreed_csv: Path = field(default_factory=lambda: BASE_DIR / "input" / "tawreed_products.csv")
-    output_csv: Path = field(default_factory=lambda: BASE_DIR / "output" / "matched_drugs_verified.csv")
+    output_csv: Path = field(default_factory=lambda: BASE_DIR / "output" / f"matched_drugs_verified_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
     env_file: Path = field(default_factory=lambda: BASE_DIR / ".env")
 
 def load_env(path: Path | None = None):

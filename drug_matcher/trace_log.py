@@ -12,7 +12,7 @@ _TRACE_CSV_COLS = [
     "candidate_brand", "candidate_norm",
     "score", "scorer", "threshold",
     "component_ok", "component_reason",
-    "ai_phase", "ai_result",
+    "ai_phase", "ai_result", "ai_confidence",
     "selection_reason",
     "final_match", "final_score", "final_method",
 ]
@@ -43,7 +43,7 @@ class MatchTraceLog:
             "candidate_norm": "", "score": "",
             "scorer": "", "threshold": "",
             "component_ok": "", "component_reason": "",
-            "ai_phase": "", "ai_result": "",
+            "ai_phase": "", "ai_result": "", "ai_confidence": "",
             "selection_reason": "",
             "final_match": "", "final_score": "",
             "final_method": "",
@@ -193,6 +193,7 @@ class MatchTraceLog:
         row["step"] = "ai_verify_result"
         row["ai_phase"] = "verify"
         row["ai_result"] = ai_action
+        row["ai_confidence"] = round(confidence, 2) if confidence else ""
         row["candidate_name"] = matched_name or ""
         row["score"] = round(confidence, 2) if confidence else ""
         row["selection_reason"] = (
@@ -231,12 +232,51 @@ class MatchTraceLog:
         row["step"] = "ai_search_result"
         row["ai_phase"] = "search"
         row["ai_result"] = "ai_found" if found else "not_found"
+        row["ai_confidence"] = round(confidence, 2) if confidence else ""
         row["candidate_name"] = match_name or ""
         row["score"] = round(confidence, 2) if confidence else ""
         row["selection_reason"] = (
             f"AI_confidence="
             f"{round(confidence, 2) if confidence else 'N/A'}"
             f" >= 0.7 -> {'accepted' if found else 'rejected'}"
+        )
+        self._rows.append(row)
+
+    def log_ai_review_sent(
+        self, code, name, norm, brand,
+        first_decision, first_confidence, matched_name,
+    ):
+        if not self._enabled:
+            return
+        row = self._base(code, name, norm, brand)
+        row["step"] = "ai_review_sent"
+        row["ai_phase"] = "review"
+        row["ai_result"] = first_decision
+        row["ai_confidence"] = round(first_confidence, 2) if first_confidence else ""
+        row["candidate_name"] = matched_name or ""
+        row["selection_reason"] = (
+            f"first_AI={first_decision}"
+            f" confidence={round(first_confidence, 2) if first_confidence else 'N/A'}"
+            f" < review_threshold -> sent to second model for review"
+        )
+        self._rows.append(row)
+
+    def log_ai_review_result(
+        self, code, name, norm, brand,
+        agree, review_confidence, review_reason, final_action,
+    ):
+        if not self._enabled:
+            return
+        row = self._base(code, name, norm, brand)
+        row["step"] = "ai_review_result"
+        row["ai_phase"] = "review"
+        row["ai_result"] = final_action
+        row["ai_confidence"] = round(review_confidence, 2) if review_confidence else ""
+        row["selection_reason"] = (
+            f"second_AI={'agrees' if agree else 'disagrees'}"
+            f" confidence={round(review_confidence, 2) if review_confidence else 'N/A'}"
+            f" reason='{review_reason}'"
+            f" action={final_action}"
         )
         self._rows.append(row)
 
@@ -382,6 +422,23 @@ class MatchTraceLog:
                     f"  [AI SEARCH] not found  "
                     f"{row['selection_reason']}\n",
                 )
+        elif step == "ai_review_sent":
+            f.write(
+                f"  [AI REVIEW] sent to second model: "
+                f"first_decision={row['ai_result']}  "
+                f"first_confidence={row['ai_confidence']}\n",
+            )
+            f.write(
+                f"     {row['selection_reason']}\n",
+            )
+        elif step == "ai_review_result":
+            f.write(
+                f"  [AI REVIEW] result={row['ai_result']}  "
+                f"review_confidence={row['ai_confidence']}\n",
+            )
+            f.write(
+                f"     {row['selection_reason']}\n",
+            )
         elif step == "ai_skip":
             f.write(
                 f"  [AI {row['ai_phase'].upper()}] "

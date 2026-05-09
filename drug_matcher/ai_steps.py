@@ -60,6 +60,55 @@ async def run_ai_verification(
     return results
 
 
+async def run_ai_review(
+    results: pd.DataFrame,
+    index: DrugIndex,
+    cfg: MatchingConfig,
+    api_cfg: APIConfig,
+    trace=None,
+) -> pd.DataFrame:
+    """AI review: second model cross-verifies low-confidence AI decisions."""
+    if not api_cfg.api_key or not api_cfg.review_model:
+        logger.info("No review model configured - skipping AI review")
+        if trace and trace.enabled:
+            _trace_skip_all_review(results, trace, "no_review_model")
+        return results
+    to_review = _select_for_review(results, cfg)
+    if len(to_review) == 0:
+        logger.info("No low-confidence AI decisions to review")
+        return results
+    logger.info(
+        f"Phase 4: Reviewing {len(to_review)} low-confidence AI decisions "
+        f"with second model (threshold={cfg.ai_review_threshold})",
+    )
+    if trace and trace.enabled:
+        for idx, row in to_review.iterrows():
+            parsed = parse_drug(row["drug_name"])
+            trace.log_ai_review_sent(
+                row["code"], row["drug_name"],
+                parsed.normalized, parsed.brand,
+                row["verified"], row["ai_confidence"],
+                row["matched_product_name_en"],
+            )
+    items = _build_review_items(to_review)
+    async with AIVerifier(
+        api_cfg, max_concurrent=cfg.ai_max_concurrent,
+    ) as verifier:
+        all_results = await _batch_review(verifier, items, cfg)
+        overridden = _apply_review_results(
+            verifier, results, index, all_results, cfg, trace,
+        )
+        logger.info(
+            f"  Review Results: "
+            f"confirmed={len(all_results)-overridden}, "
+            f"overridden={overridden}",
+        )
+    return results
+
+
+# --- helpers ---
+
+
 async def run_ai_search(
     results: pd.DataFrame,
     index: DrugIndex,
@@ -138,6 +187,7 @@ async def _apply_verification(
         else:
             results.at[idx, "verified"] = "ai_confirmed"
             results.at[idx, "match_method"] = "ai_verified"
+            results.at[idx, "ai_confidence"] = round(vr.get("confidence", 0), 2)
             if trace and trace.enabled:
                 ai_reason = vr.get("reason", "")
                 if vr.get("api_failed"):
@@ -187,6 +237,7 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
     _clear_match(results, idx)
     results.at[idx, "verified"] = "ai_rejected"
     results.at[idx, "match_method"] = "ai_verified"
+    results.at[idx, "ai_confidence"] = round(vr.get("confidence", 0), 2)
     if trace and trace.enabled:
         trace.log_ai_verify_result(
             results.at[idx, "code"], drug_name,
@@ -208,6 +259,7 @@ def _apply_correction(results, idx, ai_result):
     results.at[idx, "match_score"] = round(ai_result["score"], 1)
     results.at[idx, "verified"] = "ai_corrected"
     results.at[idx, "match_method"] = "ai_verified"
+    results.at[idx, "ai_confidence"] = round(ai_result.get("confidence", 0), 2)
 
 
 def _clear_match(results, idx):
@@ -329,6 +381,7 @@ def _apply_search_result(results, idx, ai_result):
     results.at[idx, "match_score"] = round(ai_result.get("score", 0), 1)
     results.at[idx, "verified"] = "ai_found"
     results.at[idx, "match_method"] = "ai_search"
+    results.at[idx, "ai_confidence"] = round(ai_result.get("confidence", 0), 2)
 
 
 def _trace_skip_all_verify(results, trace, reason):
@@ -357,4 +410,130 @@ def _trace_skip_all_search(results, trace, reason):
             row["code"], row["drug_name"],
             parsed.normalized, parsed.brand,
             "search", reason,
+        )
+
+
+# --- review helpers ---
+
+
+def _select_for_review(results, cfg):
+    """Select AI-verified results with confidence below review threshold."""
+    ai_verified = results[
+        results["verified"].isin(["ai_confirmed", "ai_corrected", "ai_found", "ai_rejected"])
+    ].copy()
+    if len(ai_verified) == 0:
+        return ai_verified
+    confidences = pd.to_numeric(ai_verified["ai_confidence"], errors="coerce")
+    return ai_verified[confidences < cfg.ai_review_threshold]
+
+
+def _build_review_items(to_review):
+    """Build review items: (drug_a, drug_b, first_decision, first_confidence, first_reason, row_idx)."""
+    items = []
+    for idx, row in to_review.iterrows():
+        drug_a = row["drug_name"]
+        drug_b = row.get("matched_product_name_en", "")
+        first_decision = row.get("verified", "")
+        first_confidence = pd.to_numeric(row.get("ai_confidence", 0), errors="coerce")
+        if pd.isna(first_confidence):
+            first_confidence = 0.0
+        first_reason = ""
+        items.append((drug_a, drug_b or "", first_decision, first_confidence, first_reason, idx))
+    return items
+
+
+async def _batch_review(verifier, items, cfg):
+    """Review a batch of items with the second model."""
+    all_results = []
+    batch_size = cfg.ai_batch_size
+    for i in range(0, len(items), batch_size):
+        batch = items[i:i + batch_size]
+        results = await verifier.review_batch(batch)
+        all_results.extend(results)
+        done = min(i + batch_size, len(items))
+        logger.info(f"  Reviewed {done}/{len(items)}")
+    return all_results
+
+
+async def _apply_review_results(
+    verifier, results, index, all_results, cfg, trace,
+):
+    """Apply review results: if second model disagrees, re-evaluate."""
+    overridden = 0
+    for rr in all_results:
+        idx = rr.get("row_idx")
+        if idx is None:
+            continue
+        drug_name = results.at[idx, "drug_name"]
+        parsed = parse_drug(drug_name)
+        first_decision = results.at[idx, "verified"]
+        review_confidence = rr.get("confidence", 0)
+        review_reason = rr.get("reason", "")
+        agree = rr.get("is_correct", True)
+
+        if agree:
+            # Second model agrees with first AI
+            results.at[idx, "verified"] = f"{first_decision}_reviewed"
+            results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+            if trace and trace.enabled:
+                trace.log_ai_review_result(
+                    results.at[idx, "code"], drug_name,
+                    parsed.normalized, parsed.brand,
+                    True, review_confidence, review_reason,
+                    f"{first_decision}_reviewed",
+                )
+        else:
+            # Second model disagrees with first AI
+            overridden += 1
+            if first_decision in ("ai_confirmed", "ai_corrected"):
+                # First AI said correct, second says wrong -> reject
+                _clear_match(results, idx)
+                results.at[idx, "verified"] = "ai_review_rejected"
+                results.at[idx, "match_method"] = "ai_reviewed"
+                results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+            elif first_decision == "ai_rejected":
+                # First AI rejected, second says correct -> try to find match
+                norm = parsed.normalized
+                candidates = index.fuzzy_match(norm, top_k=5)
+                valid = [
+                    (rec, score, cidx) for rec, score, cidx in candidates
+                    if components_match(
+                        parsed, index.get_parsed(cidx),
+                        cfg.brand_prefix_min,
+                    )[0]
+                ]
+                if valid:
+                    ai_result = await verifier.find_better_match(drug_name, valid)
+                    if ai_result and ai_result.get("record"):
+                        _apply_correction(results, idx, ai_result)
+                        results.at[idx, "verified"] = "ai_review_corrected"
+                        results.at[idx, "match_method"] = "ai_reviewed"
+                        results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+                    else:
+                        results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+                else:
+                    results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+            else:
+                results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+            if trace and trace.enabled:
+                trace.log_ai_review_result(
+                    results.at[idx, "code"], drug_name,
+                    parsed.normalized, parsed.brand,
+                    False, review_confidence, review_reason,
+                    results.at[idx, "verified"],
+                )
+    return overridden
+
+
+def _trace_skip_all_review(results, trace, reason):
+    """Log AI review skip for all AI-verified drugs."""
+    ai_verified = results[
+        results["verified"].isin(["ai_confirmed", "ai_corrected", "ai_found", "ai_rejected"])
+    ]
+    for idx, row in ai_verified.iterrows():
+        parsed = parse_drug(row["drug_name"])
+        trace.log_ai_skip(
+            row["code"], row["drug_name"],
+            parsed.normalized, parsed.brand,
+            "review", reason,
         )

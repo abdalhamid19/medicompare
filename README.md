@@ -27,10 +27,12 @@ pip install -r requirements.txt
 **متغيرات البيئة** (ملف `.env` في جذر المشروع):
 ```
 AGENT_ROUTER_API_KEY=your-key
-AGENT_ROUTER_BASE_URL=https://openrouter.ai/api/v1
-AGENT_ROUTER_MODEL=openai/gpt-4o-mini
+AGENT_ROUTER_BASE_URL=https://opencode.ai/zen/v1
+AGENT_ROUTER_MODEL=minimax-2.5-free
 OPENCODE_API_KEY=your-opencode-key
 OPENROUTER_API_KEY=your-openrouter-key
+REVIEW_MODEL=big-pickle
+AI_REVIEW_THRESHOLD=1.0
 ```
 
 > بدون مفتاح API، يعمل النظام في وضع الخوارزمية فقط (بدون AI).
@@ -39,7 +41,7 @@ OPENROUTER_API_KEY=your-openrouter-key
 ### التشغيل
 
 ```bash
-# مطابقة كاملة (خوارزمية + AI)
+# مطابقة كاملة (خوارزمية + AI + مراجعة)
 python run_matcher.py
 
 # مطابقة خوارزمية فقط (بدون AI)
@@ -69,12 +71,22 @@ python run_matcher.py --limit 10 --log-level DEBUG
 python run_matcher.py --limit 50 --trace
 
 # استخدام مزود AI محدد (--provider)
-python run_ai_verify.py --provider opencode --model big-pickle
+python run_ai_verify.py --provider opencode --model minimax-2.5-free
 python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
 python run_ai_verify.py --provider openrouter --model openai/gpt-oss-120b:free
 
 # تحديد مفتاح API مباشرة (--api-key)
 python run_ai_verify.py --provider opencode --api-key sk-xxx
+
+# مراجعة AI: نموذج ثاني يراجع قرارات النموذج الأول
+python run_matcher.py --provider opencode --model minimax-2.5-free --review-model big-pickle
+python run_ai_verify.py --provider opencode --model minimax-2.5-free --review-model big-pickle
+
+# مراجعة فقط للقرارات بثقة أقل من 0.9
+python run_matcher.py --review-model big-pickle --review-threshold 0.9
+
+# مراجعة كاملة (كل قرارات AI) + تتبع
+python run_matcher.py --provider opencode --model minimax-2.5-free --review-model big-pickle --review-threshold 1.0 --trace --limit 50
 
 # اختبار اتصال API
 python test_api.py
@@ -124,8 +136,8 @@ medicompare/
 │   ├── config.py          # الإعدادات
 │   ├── normalizer.py      # التطبيع
 │   ├── indexer.py         # البحث
-│   ├── ai_steps.py        # خطوات AI (تحقق + بحث)
-│   ├── verifier.py        # AI API client
+│   ├── ai_steps.py        # خطوات AI (تحقق + بحث + مراجعة)
+│   ├── verifier.py        # AI API client (تحقق + مراجعة)
 │   └── pipeline.py        # التنسيق
 ├── input/                 # البيانات المدخلة
 ├── output/                # النتائج
@@ -149,21 +161,22 @@ medicompare/
 | `normalizer.py` | تطبيع واستخراج مكونات الدواء (brand, dosage, form, etc) |
 | `indexer.py` | فهرس مقلوب (Brand Index O(1)) + Fuzzy matching (O(n)) |
 | `trace_log.py` | تتبع تفصيلي لخطوات الخوارزمية (CSV+TXT) |
-| `verifier.py` | التحقق بـ AI متزامن (max 5 طلبات متوازية) |
-| `pipeline.py` | 4 مراحل: مطابقة → تحقق → بحث → تنظيف |
+| `verifier.py` | التحقق بـ AI متزامن (max 5 طلبات متوازية) + مراجعة بنموذج ثاني |
+| `pipeline.py` | 5 مراحل: مطابقة → تحقق → بحث → مراجعة → تنظيف |
 
-## 📊 العمليات الأربع
+## 📊 العمليات الخمس
 
 ```
 1️⃣ المطابقة الخوارزمية     Brand Index (O(1)) + Fuzzy (O(n))
 2️⃣ التحقق بالـ AI          للنتائج الضعيفة (<90%)
 3️⃣ بحث الـ AI               عن مطابقات للأصناف غير المطابقة
-4️⃣ تنظيف خوارزمي نهائي     تحقق إضافي
+4️⃣ مراجعة AI ثاني          يراجع قرارات النموذج الأول (ثقة < عتبة المراجعة)
+5️⃣ تنظيف خوارزمي نهائي     تحقق إضافي
 ```
 
 ## 📋 الإخراج
 
-ملف `output/matched_drugs_verified.csv`:
+ملف `output/matched_drugs_verified_YYYYMMDD_HHMMSS.csv`:
 
 | العمود | الوصف |
 |---|---|
@@ -172,8 +185,10 @@ medicompare/
 | matched_product_name_en | الاسم المطابق الإنجليزي |
 | matched_product_name_ar | الاسم المطابق العربي |
 | match_score | نسبة المطابقة (0-100) |
-| verified | الحالة (algo_match, ai_confirmed, etc) |
+| verified | الحالة (algo_match, ai_confirmed, ai_confirmed_reviewed, ai_review_rejected, etc) |
 | match_method | طريقة المطابقة (brand_index, token_set_ratio, etc) |
+| ai_confidence | ثقة النموذج الأول (0.0-1.0) |
+| ai_review_confidence | ثقة نموذج المراجعة (0.0-1.0) |
 
 ## ⚙️ الإعدادات الافتراضية
 
@@ -183,6 +198,7 @@ brand_prefix_min = 4              # طول البادئة للعلامة الت�
 ai_verify_threshold = 90.0        # نسبة الإحالة للـ AI
 ai_max_concurrent = 5             # طلبات AI المتوازية
 ai_batch_size = 20                # حجم دفعة الـ AI
+ai_review_threshold = 1.0         # عتبة مراجعة AI (مراجعة القرارات بثقة < هذا)
 ```
 
 راجع [ARCHITECTURE.md](docs/ARCHITECTURE.md) لفهم كل خيار بالتفصيل.
@@ -192,6 +208,7 @@ ai_batch_size = 20                # حجم دفعة الـ AI
 ✅ **فهرس مقلوب**: بحث O(1) عن طريق البادئة  
 ✅ **Fuzzy Matching**: 3 طرق مختلفة للمقارنة  
 ✅ **AI Verification**: تحقق متزامن من OpenRouter API  
+✅ **AI Review**: نموذج ثاني يراجع قرارات النموذج الأول ذات الثقة المنخفضة  
 ✅ **Batch Processing**: معالجة 20 تطابق معاً  
 ✅ **Post Cleanup**: تنظيف خوارزمي نهائي للنتائج  
 
@@ -212,7 +229,8 @@ pytest tests/test_indexer.py  # اختبار واحد
 | بحث بالعلامة | O(1) | <0.1ms |
 | fuzzy search | O(n) | 50-200ms |
 | AI واحد | O(1) | 1-3s |
-| AI دفعة (20) | O(1) | 3-5s (متوازي) |
+| AI مراجعة واحدة | O(1) | 1-3s |
+| AI مراجعة دفعة (20) | O(1) | 3-5s (متوازي) |
 
 ## 🤖 مزودي API المدعومين
 
