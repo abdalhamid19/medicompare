@@ -417,18 +417,28 @@ def _trace_skip_all_search(results, trace, reason):
 
 
 def _select_for_review(results, cfg):
-    """Select AI-verified results with confidence below review threshold."""
+    """Select AI-verified results for review.
+    - Genuine low-confidence decisions (confidence > 0 but < threshold): normal review
+    - API-failed decisions (confidence == 0): sent for fresh verification (no first-AI opinion)"""
     ai_verified = results[
         results["verified"].isin(["ai_confirmed", "ai_corrected", "ai_found", "ai_rejected"])
     ].copy()
     if len(ai_verified) == 0:
         return ai_verified
     confidences = pd.to_numeric(ai_verified["ai_confidence"], errors="coerce")
-    return ai_verified[confidences < cfg.ai_review_threshold]
+    # API-failed items (confidence == 0) need fresh verification
+    api_failed = ai_verified[confidences == 0.0]
+    # Genuine low-confidence items need normal review
+    genuine = ai_verified[confidences > 0.0]
+    if len(genuine) > 0:
+        genuine_confidences = pd.to_numeric(genuine["ai_confidence"], errors="coerce")
+        genuine = genuine[genuine_confidences < cfg.ai_review_threshold]
+    # Combine both groups
+    return pd.concat([api_failed, genuine]) if len(api_failed) > 0 else genuine
 
 
 def _build_review_items(to_review):
-    """Build review items: (drug_a, drug_b, first_decision, first_confidence, first_reason, row_idx)."""
+    """Build review items: (drug_a, drug_b, first_decision, first_confidence, first_reason, row_idx, api_failed)."""
     items = []
     for idx, row in to_review.iterrows():
         drug_a = row["drug_name"]
@@ -437,8 +447,10 @@ def _build_review_items(to_review):
         first_confidence = pd.to_numeric(row.get("ai_confidence", 0), errors="coerce")
         if pd.isna(first_confidence):
             first_confidence = 0.0
-        first_reason = ""
-        items.append((drug_a, drug_b or "", first_decision, first_confidence, first_reason, idx))
+        # Mark items where first AI had API failure (confidence=0 from fallback)
+        is_api_failed = first_confidence == 0.0
+        first_reason = "API unavailable - no first AI decision was made" if is_api_failed else ""
+        items.append((drug_a, drug_b or "", first_decision, first_confidence, first_reason, idx, is_api_failed))
     return items
 
 
@@ -449,6 +461,9 @@ async def _batch_review(verifier, items, cfg):
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
         results = await verifier.review_batch(batch)
+        # Propagate api_failed flag from items to results
+        for j, r in enumerate(results):
+            r["api_failed"] = batch[j][6]  # 7th element is api_failed bool
         all_results.extend(results)
         done = min(i + batch_size, len(items))
         logger.info(f"  Reviewed {done}/{len(items)}")
@@ -458,7 +473,8 @@ async def _batch_review(verifier, items, cfg):
 async def _apply_review_results(
     verifier, results, index, all_results, cfg, trace,
 ):
-    """Apply review results: if second model disagrees, re-evaluate."""
+    """Apply review results: if second model disagrees, re-evaluate.
+    For api_failed items, is_correct is a direct fresh decision."""
     overridden = 0
     for rr in all_results:
         idx = rr.get("row_idx")
@@ -469,9 +485,38 @@ async def _apply_review_results(
         first_decision = results.at[idx, "verified"]
         review_confidence = rr.get("confidence", 0)
         review_reason = rr.get("reason", "")
-        agree = rr.get("is_correct", True)
+        is_correct = rr.get("is_correct", True)
+        is_api_failed = rr.get("api_failed", False)
 
-        if agree:
+        if is_api_failed:
+            # First AI never made a real decision — second model's result is the primary decision
+            if is_correct:
+                results.at[idx, "verified"] = "ai_confirmed"
+                results.at[idx, "match_method"] = "ai_verified"
+                results.at[idx, "ai_confidence"] = round(review_confidence, 2)
+                results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+                if trace and trace.enabled:
+                    trace.log_ai_review_result(
+                        results.at[idx, "code"], drug_name,
+                        parsed.normalized, parsed.brand,
+                        True, review_confidence, review_reason,
+                        "ai_confirmed (fresh verify by review model)",
+                    )
+            else:
+                # Second model says this is NOT a correct match
+                overridden += 1
+                _clear_match(results, idx)
+                results.at[idx, "verified"] = "ai_review_rejected"
+                results.at[idx, "match_method"] = "ai_reviewed"
+                results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+                if trace and trace.enabled:
+                    trace.log_ai_review_result(
+                        results.at[idx, "code"], drug_name,
+                        parsed.normalized, parsed.brand,
+                        False, review_confidence, review_reason,
+                        "ai_review_rejected (fresh verify by review model)",
+                    )
+        elif is_correct:
             # Second model agrees with first AI
             results.at[idx, "verified"] = f"{first_decision}_reviewed"
             results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)

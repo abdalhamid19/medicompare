@@ -193,12 +193,12 @@ class MatchTraceLog:
         row["step"] = "ai_verify_result"
         row["ai_phase"] = "verify"
         row["ai_result"] = ai_action
-        row["ai_confidence"] = round(confidence, 2) if confidence else ""
+        row["ai_confidence"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["candidate_name"] = matched_name or ""
-        row["score"] = round(confidence, 2) if confidence else ""
+        row["score"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["selection_reason"] = (
             f"AI_says={'correct' if is_correct else 'incorrect'}"
-            f" confidence={round(confidence, 2) if confidence else 'N/A'}"
+            f" confidence={round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
             f" reason='{ai_reason}'"
             f" action={ai_action}"
         )
@@ -232,12 +232,12 @@ class MatchTraceLog:
         row["step"] = "ai_search_result"
         row["ai_phase"] = "search"
         row["ai_result"] = "ai_found" if found else "not_found"
-        row["ai_confidence"] = round(confidence, 2) if confidence else ""
+        row["ai_confidence"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["candidate_name"] = match_name or ""
-        row["score"] = round(confidence, 2) if confidence else ""
+        row["score"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["selection_reason"] = (
             f"AI_confidence="
-            f"{round(confidence, 2) if confidence else 'N/A'}"
+            f"{round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
             f" >= 0.7 -> {'accepted' if found else 'rejected'}"
         )
         self._rows.append(row)
@@ -252,11 +252,11 @@ class MatchTraceLog:
         row["step"] = "ai_review_sent"
         row["ai_phase"] = "review"
         row["ai_result"] = first_decision
-        row["ai_confidence"] = round(first_confidence, 2) if first_confidence else ""
+        row["ai_confidence"] = round(float(first_confidence), 2) if first_confidence not in (None, "") else ""
         row["candidate_name"] = matched_name or ""
         row["selection_reason"] = (
             f"first_AI={first_decision}"
-            f" confidence={round(first_confidence, 2) if first_confidence else 'N/A'}"
+            f" confidence={round(float(first_confidence), 2) if first_confidence not in (None, '') else 'N/A'}"
             f" < review_threshold -> sent to second model for review"
         )
         self._rows.append(row)
@@ -271,10 +271,10 @@ class MatchTraceLog:
         row["step"] = "ai_review_result"
         row["ai_phase"] = "review"
         row["ai_result"] = final_action
-        row["ai_confidence"] = round(review_confidence, 2) if review_confidence else ""
+        row["ai_confidence"] = round(float(review_confidence), 2) if review_confidence not in (None, "") else ""
         row["selection_reason"] = (
             f"second_AI={'agrees' if agree else 'disagrees'}"
-            f" confidence={round(review_confidence, 2) if review_confidence else 'N/A'}"
+            f" confidence={round(float(review_confidence), 2) if review_confidence not in (None, '') else 'N/A'}"
             f" reason='{review_reason}'"
             f" action={final_action}"
         )

@@ -25,53 +25,93 @@ class MatchingConfig:
     ai_batch_size: int = 20
     ai_max_concurrent: int = 5
     top_k_candidates: int = 10
-    ai_review_threshold: float = 1.0  # review AI decisions with confidence below this
+    ai_review_threshold: float = 0.8  # review AI decisions with confidence below this
 
 PROVIDERS = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "env_key": "OPENROUTER_API_KEY",
+        "env_keys": ["OPENROUTER_API_KEY"],
         "default_model": "openai/gpt-4o-mini",
     },
     "opencode": {
         "base_url": "https://opencode.ai/zen/v1",
         "env_key": "OPENCODE_API_KEY",
+        "env_keys": ["OPENCODE_API_KEY_1", "OPENCODE_API_KEY_2", "OPENCODE_API_KEY"],
         "default_model": "big-pickle",
     },
     "agentrouter": {
         "base_url": "https://agentrouter.org/v1",
         "env_key": "AGENT_ROUTER_API_KEY",
+        "env_keys": ["AGENT_ROUTER_API_KEY"],
         "default_model": "glm-5.1",
     },
     "custom": {
         "base_url": "",
         "env_key": "AGENT_ROUTER_API_KEY",
+        "env_keys": ["AGENT_ROUTER_API_KEY"],
         "default_model": "",
     },
 }
 
 def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -> dict:
     """Resolve API config from provider name, falling back to env vars.
-    Returns dict with api_key, base_url, model."""
+    Returns dict with api_key, api_keys, base_url, model, fallback_models."""
+    fallback_models = tuple(
+        m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()
+    )
     # If provider specified, use its defaults
     if provider and provider in PROVIDERS:
         p = PROVIDERS[provider]
         key = api_key or os.getenv(p["env_key"], "") or os.getenv("AGENT_ROUTER_API_KEY", "")
+        # Collect all keys for this provider
+        all_keys = tuple(
+            k for k in (
+                api_key,
+                *(os.getenv(ek, "") for ek in p.get("env_keys", [p["env_key"]])),
+                os.getenv("AGENT_ROUTER_API_KEY", ""),
+            ) if k
+        )
+        # Deduplicate while preserving order
+        seen = set()
+        unique_keys = tuple(k for k in all_keys if k not in seen and not seen.add(k))
         url = p["base_url"]
         mdl = model or os.getenv("AGENT_ROUTER_MODEL", "") or p["default_model"]
-        return {"api_key": key, "base_url": url, "model": mdl}
+        return {"api_key": key, "api_keys": unique_keys, "base_url": url, "model": mdl, "fallback_models": fallback_models}
     # No provider: use env vars or .env
     key = api_key or os.getenv("AGENT_ROUTER_API_KEY", "")
     url = os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     mdl = model or os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini")
-    return {"api_key": key, "base_url": url, "model": mdl}
+    all_keys = tuple(
+        k for k in (
+            api_key,
+            os.getenv("OPENCODE_API_KEY_1", ""),
+            os.getenv("OPENCODE_API_KEY_2", ""),
+            os.getenv("OPENCODE_API_KEY", ""),
+            os.getenv("AGENT_ROUTER_API_KEY", ""),
+        ) if k
+    )
+    seen = set()
+    unique_keys = tuple(k for k in all_keys if k not in seen and not seen.add(k))
+    return {"api_key": key, "api_keys": unique_keys, "base_url": url, "model": mdl, "fallback_models": fallback_models}
 
 
 @dataclass(frozen=True)
 class APIConfig:
     api_key: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_API_KEY", ""))
+    api_keys: tuple = field(default_factory=lambda: tuple(
+        k for k in (
+            os.getenv("OPENCODE_API_KEY_1", ""),
+            os.getenv("OPENCODE_API_KEY_2", ""),
+            os.getenv("OPENCODE_API_KEY", ""),
+            os.getenv("AGENT_ROUTER_API_KEY", ""),
+        ) if k
+    ))
     base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
     model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini"))
+    fallback_models: tuple = field(default_factory=lambda: tuple(
+        m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()
+    ))
     review_model: str = field(default_factory=lambda: os.getenv("REVIEW_MODEL", ""))
     max_tokens: int = 1024
     temperature: float = 0.1

@@ -35,7 +35,7 @@ def main():
         ai_batch_size=20,
         ai_max_concurrent=5,
         top_k_candidates=10,
-        ai_review_threshold=args.review_threshold if args.review_threshold is not None else 1.0,
+        ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.8,
     )
 
     resolved = resolve_api_config(
@@ -45,8 +45,10 @@ def main():
     )
     api_cfg = APIConfig(
         api_key=resolved["api_key"],
+        api_keys=resolved.get("api_keys", ()),
         base_url=resolved["base_url"],
         model=resolved["model"],
+        fallback_models=resolved.get("fallback_models", ()),
         review_model=args.review_model or "",
         max_tokens=512,
         temperature=0.1,

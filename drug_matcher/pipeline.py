@@ -83,6 +83,10 @@ class MatchPipeline:
             rec, score, method = self._match_one(row, stats)
             results.append(self._make_row(row, rec, score, method, stats))
         self._results = pd.DataFrame(results)
+        # Allow mixed str/float in numeric-optional columns
+        for col in ("match_score", "ai_confidence", "ai_review_confidence"):
+            if col in self._results.columns:
+                self._results[col] = self._results[col].astype(object)
         logger.info(f"Phase 1 done: {stats}")
         self._log_match_counts()
         return self._results
