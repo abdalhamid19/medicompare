@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument("--review-threshold", type=float, default=None, help="Review AI decisions with confidence below this (default: 1.0)")
     parser.add_argument("--no-ai-preflight", action="store_true", help="Skip AI health preflight")
     parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
+    parser.add_argument("--ai-search-limit", type=int, default=None, help="Maximum unmatched rows to send through AI search")
     return parser.parse_args()
 
 
@@ -114,6 +115,7 @@ def main():
         ai_max_concurrent=5,
         top_k_candidates=10,
         ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.95,
+        ai_search_limit=args.ai_search_limit,
     )
 
     resolved = resolve_api_config(

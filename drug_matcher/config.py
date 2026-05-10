@@ -26,6 +26,7 @@ class MatchingConfig:
     ai_max_concurrent: int = 5
     top_k_candidates: int = 10
     ai_review_threshold: float = 0.8  # review AI decisions with confidence below this
+    ai_search_limit: int | None = None
 
 PROVIDERS = {
     "openrouter": {

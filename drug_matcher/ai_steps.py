@@ -1,4 +1,5 @@
 """AI verification and search steps extracted from pipeline."""
+import asyncio
 import logging
 
 import pandas as pd
@@ -13,6 +14,7 @@ from .verifier import AIVerifier
 logger = logging.getLogger("medicompare")
 
 _AI_SEARCH_ACCEPT_CONFIDENCE = 0.75
+_AI_SEARCH_MIN_CANDIDATE_SCORE = 80.0
 _AI_REVIEW_OVERRIDE_CONFIDENCE = 0.75
 
 
@@ -176,9 +178,26 @@ async def run_ai_search(
     if len(unmatched) == 0:
         logger.info("No unmatched items to search")
         return results
+    original_unmatched = len(unmatched)
+    if cfg.ai_search_limit is not None and len(unmatched) > cfg.ai_search_limit:
+        skipped = unmatched.iloc[cfg.ai_search_limit:]
+        unmatched = unmatched.iloc[:cfg.ai_search_limit]
+        if trace and trace.enabled:
+            for idx, row in skipped.iterrows():
+                parsed = parse_drug(row["drug_name"])
+                trace.log_ai_search_not_eligible(
+                    row["code"], row["drug_name"],
+                    parsed.normalized, parsed.brand,
+                    f"ai_search_limit={cfg.ai_search_limit}",
+                    row_index=idx,
+                )
     logger.info(
         f"Phase 3: AI searching for matches "
-        f"among {len(unmatched)} unmatched items",
+        f"among {len(unmatched)} unmatched items"
+        + (
+            f" (limited from {original_unmatched})"
+            if len(unmatched) != original_unmatched else ""
+        ),
     )
     async with AIVerifier(
         api_cfg, max_concurrent=cfg.ai_max_concurrent,
@@ -366,10 +385,11 @@ async def _search_batch(verifier, results, index, unmatched, cfg, trace):
     items = list(unmatched.iterrows())
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
-        for _, row in batch:
-            found += await _try_search_one(
-                verifier, results, index, row, cfg, trace,
-            )
+        batch_results = await asyncio.gather(*[
+            _try_search_one(verifier, results, index, row, cfg, trace)
+            for _, row in batch
+        ])
+        found += sum(batch_results)
         done = min(i + batch_size, len(items))
         logger.info(f"  Searched {done}/{len(items)}, found {found}")
     return found
@@ -395,6 +415,19 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             trace.log_ai_skip(
                 code, drug_name, norm, parsed.brand,
                 "search", "no valid candidates found",
+                row_index=row.name,
+            )
+        return 0
+    candidates = _eligible_search_candidates(parsed, candidates, index, cfg)
+    if not candidates:
+        if trace and trace.enabled:
+            trace.log_ai_search_not_eligible(
+                code, drug_name, norm, parsed.brand,
+                (
+                    "ai_search_skipped_not_eligible: "
+                    f"no candidate >= {_AI_SEARCH_MIN_CANDIDATE_SCORE}"
+                    " with safe components"
+                ),
                 row_index=row.name,
             )
         return 0
@@ -484,6 +517,18 @@ def _search_candidates(parsed, norm, index, cfg, price=None):
         if score >= 65:
             candidates.append((rec, score, idx))
     return _dedupe_candidates(candidates)
+
+
+def _eligible_search_candidates(parsed, candidates, index, cfg):
+    eligible = []
+    for rec, score, idx in candidates:
+        ok, _ = components_match(
+            parsed, index.get_parsed(idx),
+            cfg.brand_prefix_min,
+        )
+        if ok and score >= _AI_SEARCH_MIN_CANDIDATE_SCORE:
+            eligible.append((rec, score, idx))
+    return eligible
 
 
 def _dedupe_candidates(candidates):

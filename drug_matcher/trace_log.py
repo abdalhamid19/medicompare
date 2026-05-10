@@ -535,6 +535,23 @@ class MatchTraceLog:
         row["selection_reason"] = reason
         self._rows.append(row)
 
+    def log_ai_search_not_eligible(
+        self, code, name, norm, brand, reason, row_index="",
+    ):
+        if not self._enabled:
+            return
+        row = self._base(
+            code, name, norm, brand,
+            row_index=row_index, phase="ai_search",
+            decision="skipped", decision_source="ai_search",
+            error_stage="ai_search", error_code="not_eligible",
+        )
+        row["step"] = "ai_search_not_eligible"
+        row["ai_phase"] = "search"
+        row["ai_result"] = "skipped"
+        row["selection_reason"] = reason
+        self._rows.append(row)
+
     def log_ai_preflight_start(self, models, key_count):
         self._append(
             "", "", "", "",
@@ -905,6 +922,11 @@ class MatchTraceLog:
             f.write(
                 f"  [AI {row['ai_phase'].upper()}] "
                 f"SKIPPED: {row['selection_reason']}\n",
+            )
+        elif step == "ai_search_not_eligible":
+            f.write(
+                f"  [AI SEARCH] NOT ELIGIBLE: "
+                f"{row['selection_reason']}\n",
             )
         elif step in {"ai_preflight_start", "ai_preflight_result"}:
             f.write(f"  [AI PREFLIGHT] {row['selection_reason']}\n")

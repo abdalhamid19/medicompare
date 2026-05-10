@@ -14,6 +14,7 @@ from drug_matcher.ai_steps import (
     _build_verify_items,
     _get_unmatched,
     _search_candidates,
+    _eligible_search_candidates,
     _dedupe_candidates,
     _apply_correction,
     _apply_search_result,
@@ -502,6 +503,7 @@ class TestRunAiSearchWithMock(unittest.TestCase):
         mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
         mock_verifier.__aexit__ = AsyncMock(return_value=None)
         mock_verifier.find_better_match = AsyncMock(return_value=None)
+        mock_verifier.get_fallback_log = MagicMock(return_value="")
 
         with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
             asyncio.run(run_ai_search(results, index, cfg, api_cfg))
@@ -604,6 +606,71 @@ class TestRunAiSearchWithMock(unittest.TestCase):
                 run_ai_search(results, index, cfg, api_cfg)
             )
         self.assertEqual(out.at[0, "matched_product_name_en"], "")
+
+    def test_ai_search_limit_skips_extra_rows(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+            {
+                "code": "D2", "drug_name": "FEROGLOBIN 30 CAPS",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+        ])
+        index = _make_index()
+        cfg = MatchingConfig(fuzzy_threshold=70, ai_search_limit=1)
+        api_cfg = APIConfig(api_key="test-key")
+        trace = MatchTraceLog(enabled=True)
+
+        mock_verifier = AsyncMock()
+        mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
+        mock_verifier.__aexit__ = AsyncMock(return_value=None)
+        mock_verifier.find_better_match = AsyncMock(return_value=None)
+        mock_verifier.get_fallback_log = MagicMock(return_value="")
+
+        with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
+            asyncio.run(run_ai_search(results, index, cfg, api_cfg, trace))
+
+        self.assertEqual(mock_verifier.find_better_match.call_count, 1)
+        skipped = [
+            row for row in trace._rows
+            if row["step"] == "ai_search_not_eligible"
+        ]
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("ai_search_limit=1", skipped[0]["selection_reason"])
+
+
+class TestAiSearchEligibility(unittest.TestCase):
+    def test_rejects_low_score_candidates_before_ai(self):
+        index = _make_index()
+        parsed = index.get_parsed(0)
+        candidates = [(index.get_record(0), 79.9, 0)]
+
+        eligible = _eligible_search_candidates(
+            parsed, candidates, index, MatchingConfig(),
+        )
+
+        self.assertEqual(eligible, [])
+
+    def test_keeps_high_score_safe_candidates(self):
+        index = _make_index()
+        parsed = index.get_parsed(2)
+        candidates = [(index.get_record(2), 95.0, 2)]
+
+        eligible = _eligible_search_candidates(
+            parsed, candidates, index, MatchingConfig(),
+        )
+
+        self.assertEqual(len(eligible), 1)
 
 
 class TestApplyReviewResults(unittest.TestCase):
