@@ -146,8 +146,8 @@ class MatchPipeline:
     def _ai_eligibility(self, rec, score, method, norm):
         """Determine if this drug will go to AI and why."""
         if rec is None:
-            if not norm or len(norm) < 3:
-                return "none", "no_match + norm too short for AI"
+            if method in {"too_short", "invalid_name"}:
+                return "none", f"{method} -> not eligible for AI"
             return "search", (
                 "no_match -> eligible for AI search"
             )

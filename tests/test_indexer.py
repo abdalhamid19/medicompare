@@ -95,6 +95,15 @@ class DrugIndexTests(unittest.TestCase):
         self.assertEqual(score, 0.0)
         self.assertEqual(method, "no_match")
 
+    def test_best_match_marks_numeric_noise_invalid(self) -> None:
+        index = make_index(threshold=65)
+
+        record, score, method = index.best_match("45645841635")
+
+        self.assertIsNone(record)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(method, "invalid_name")
+
     def test_best_match_rejects_missing_b12_variant(self) -> None:
         tawreed = pd.DataFrame(
             [

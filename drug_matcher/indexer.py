@@ -128,6 +128,8 @@ class DrugIndex:
         norm = parsed.normalized
         if not norm or len(norm) < 3:
             return None, 0.0, "too_short"
+        if not parsed.brand:
+            return None, 0.0, "invalid_name"
         rec, score = self._try_brand_match(parsed, norm)
         if rec is not None:
             return rec, score, "brand_index"
@@ -149,6 +151,8 @@ class DrugIndex:
         }
         if not norm or len(norm) < 3:
             return None, 0.0, "too_short", trace
+        if not parsed.brand:
+            return None, 0.0, "invalid_name", trace
         hits = self._brand_lookup(parsed)
         trace["brand_hits"] = hits
         if hits:
