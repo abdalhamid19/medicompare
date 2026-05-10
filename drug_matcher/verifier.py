@@ -214,12 +214,39 @@ class AIVerifier:
                     plan.append((key, mdl))
         return plan
 
+    def _build_request_plan(self, model: str) -> list[dict[str, Any]]:
+        if self._cfg.attempt_plan:
+            return self._rotation_request_plan()
+        return [
+            {
+                "provider": "default",
+                "base_url": self._cfg.base_url,
+                "key": key,
+                "model": mdl,
+            }
+            for key, mdl in self._build_attempt_plan(model)
+        ]
+
+    def _rotation_request_plan(self) -> list[dict[str, Any]]:
+        plan = []
+        for attempt in self._cfg.attempt_plan:
+            combo = (attempt.provider, attempt.key_suffix, attempt.model)
+            if combo in self._failed_combos:
+                continue
+            plan.append({
+                "provider": attempt.provider,
+                "base_url": attempt.base_url,
+                "key": attempt.api_key,
+                "model": attempt.model,
+            })
+        return plan
+
     def _record_combo_failure(
         self, key: str, model: str, reason: str,
-        *, permanent: bool = False,
+        *, permanent: bool = False, provider: str = "",
     ) -> bool:
         """Track failures and disable noisy key/model combos for this run."""
-        combo = (key[-6:], model)
+        combo = self._combo_key(key, model, provider)
         if permanent:
             self._failed_combos.add(combo)
             return True
@@ -232,11 +259,22 @@ class AIVerifier:
 
     def _log_combo_failure(
         self, key: str, model: str, reason: str, detail: str = "",
+        provider: str = "",
     ) -> None:
         detail_text = f": {detail[:160]}" if detail else ""
-        log_msg = f"{reason}{detail_text} with model={model} key=...{key[-6:]}"
+        provider_text = f" provider={provider}" if provider else ""
+        log_msg = (
+            f"{reason}{detail_text} with{provider_text} "
+            f"model={model} key=...{key[-6:]}"
+        )
         self._fallback_log.append(log_msg)
         logger.warning("  ⚠ %s, trying next...", log_msg)
+
+    @staticmethod
+    def _combo_key(key: str, model: str, provider: str = ""):
+        if provider:
+            return provider, key[-6:], model
+        return key[-6:], model
 
     async def __aenter__(self):
         self._session = aiohttp.ClientSession(
@@ -271,12 +309,16 @@ class AIVerifier:
             )
             close_session = True
         model = payload.get("model", self._cfg.model)
-        plan = self._build_attempt_plan(model)
+        plan = self._build_request_plan(model)
         attempts = []
         last_unparseable: tuple[str, str] | None = None
 
         try:
-            for plan_idx, (key, mdl) in enumerate(plan):
+            for plan_idx, item in enumerate(plan):
+                key = item["key"]
+                mdl = item["model"]
+                base_url = item["base_url"]
+                provider = item["provider"]
                 payload["model"] = mdl
                 headers = dict(self._session.headers)
                 headers["Authorization"] = f"Bearer {key}"
@@ -285,16 +327,18 @@ class AIVerifier:
                     async with self._semaphore:
                         try:
                             async with self._session.post(
-                                f"{self._cfg.base_url}/chat/completions",
+                                f"{base_url}/chat/completions",
                                 json=payload,
                                 headers=headers,
                             ) as resp:
                                 if resp.status == 429:
                                     disabled = self._record_combo_failure(
                                         key, mdl, "rate_limited",
+                                        provider=provider,
                                     )
                                     attempts.append({
                                         "attempt": attempt + 1,
+                                        "provider": provider,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": resp.status,
@@ -310,6 +354,7 @@ class AIVerifier:
                                     self._log_combo_failure(
                                         key, mdl, "Rate limited",
                                         attempts[-1]["reason"],
+                                        provider=provider,
                                     )
                                     break
                                 if resp.status != 200:
@@ -317,9 +362,11 @@ class AIVerifier:
                                     disabled = self._record_combo_failure(
                                         key, mdl, f"http_{resp.status}",
                                         permanent=resp.status in (401, 403),
+                                        provider=provider,
                                     )
                                     attempts.append({
                                         "attempt": attempt + 1,
+                                        "provider": provider,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": resp.status,
@@ -332,6 +379,7 @@ class AIVerifier:
                                     self._log_combo_failure(
                                         key, mdl, f"API error {resp.status}",
                                         text,
+                                        provider=provider,
                                     )
                                     break  # try next (key, model) combo
                                 data = await resp.json()
@@ -340,9 +388,11 @@ class AIVerifier:
                                 if result is None:
                                     disabled = self._record_combo_failure(
                                         key, mdl, "invalid_json",
+                                        provider=provider,
                                     )
                                     attempts.append({
                                         "attempt": attempt + 1,
+                                        "provider": provider,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": 200,
@@ -361,6 +411,7 @@ class AIVerifier:
                                     break
                                 attempts.append({
                                     "attempt": attempt + 1,
+                                    "provider": provider,
                                     "key_suffix": key[-6:],
                                     "model": mdl,
                                     "status": 200,
@@ -379,15 +430,18 @@ class AIVerifier:
                                     "reason": str(result.get("reason", "")),
                                     "confidence": confidence,
                                     "model_used": mdl,
+                                    "provider_used": provider,
                                     "_raw": result,
                                     "_api_attempts": attempts,
                                 }
                         except Exception as e:
                             disabled = self._record_combo_failure(
                                 key, mdl, type(e).__name__,
+                                provider=provider,
                             )
                             attempts.append({
                                 "attempt": attempt + 1,
+                                "provider": provider,
                                 "key_suffix": key[-6:],
                                 "model": mdl,
                                 "status": "exception",
@@ -400,11 +454,13 @@ class AIVerifier:
                             self._log_combo_failure(
                                 key, mdl, f"Exception {type(e).__name__}",
                                 str(e),
+                                provider=provider,
                             )
                             break  # try next combo
             if last_unparseable:
                 content, mdl = last_unparseable
                 parsed = _fallback_from_unparseable_response(content, mdl)
+                parsed["provider_used"] = attempts[-1].get("provider", "")
                 parsed["_api_attempts"] = attempts
                 return parsed
             return None  # all combos exhausted
@@ -544,6 +600,7 @@ class AIVerifier:
                 "confidence": min(float(result.get("confidence", 0.0)), 0.5),
                 "parse_failed": True,
                 "model_used": result.get("model_used", ""),
+                "provider_used": result.get("provider_used", ""),
                 "_api_attempts": result.get("_api_attempts", []),
             }
 
@@ -554,6 +611,7 @@ class AIVerifier:
                 "reason": str(result.get("reason", "")),
                 "confidence": float(result.get("confidence", first_confidence)),
                 "model_used": result.get("model_used", ""),
+                "provider_used": result.get("provider_used", ""),
                 "_api_attempts": result.get("_api_attempts", []),
             }
         agree = bool(result.get("agree", True))
@@ -562,6 +620,7 @@ class AIVerifier:
             "reason": str(result.get("reason", "")),
             "confidence": float(result.get("confidence", first_confidence)),
             "model_used": result.get("model_used", ""),
+            "provider_used": result.get("provider_used", ""),
             "_api_attempts": result.get("_api_attempts", []),
         }
 
@@ -638,6 +697,7 @@ class AIVerifier:
                 "reason": result.get("reason", ""),
                 "confidence": float(result.get("confidence", 0.0)),
                 "model_used": result.get("model_used", ""),
+                "provider_used": result.get("provider_used", ""),
                 "_api_attempts": result.get("_api_attempts", []),
                 "best_index": best_idx,
                 "parse_failed": result.get("parse_failed", False),
@@ -647,6 +707,7 @@ class AIVerifier:
             "reason": result.get("reason", "none"),
             "confidence": float(result.get("confidence", 0.0)),
             "model_used": result.get("model_used", ""),
+            "provider_used": result.get("provider_used", ""),
             "_api_attempts": result.get("_api_attempts", []),
             "best_index": best_idx,
             "parse_failed": result.get("parse_failed", False),

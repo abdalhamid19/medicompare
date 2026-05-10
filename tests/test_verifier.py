@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from drug_matcher.config import APIConfig
+from drug_matcher.ai_rotation import AIModelAttempt
 from drug_matcher.prompts import (
     FRESH_REVIEW_PROMPT,
     REVIEW_PROMPT,
@@ -277,6 +278,37 @@ class AIVerifierTests(unittest.TestCase):
         self.assertFalse(first)
         self.assertTrue(second)
         self.assertIn(("111111", "model-a"), verifier._failed_combos)
+
+    def test_request_plan_uses_rotated_attempts(self) -> None:
+        attempt = AIModelAttempt(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            key_name="GROQ_API_KEY_1",
+            api_key="gsk-test123456",
+            model="openai/gpt-oss-120b",
+            quality_rank=1,
+        )
+        verifier = AIVerifier(APIConfig(api_key="gsk-test123456", attempt_plan=(attempt,)))
+
+        plan = verifier._build_request_plan("ignored")
+
+        self.assertEqual(plan[0]["provider"], "groq")
+        self.assertEqual(plan[0]["base_url"], "https://api.groq.com/openai/v1")
+        self.assertEqual(plan[0]["model"], "openai/gpt-oss-120b")
+
+    def test_request_plan_skips_failed_rotated_attempt(self) -> None:
+        attempt = AIModelAttempt(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            key_name="GROQ_API_KEY_1",
+            api_key="gsk-test123456",
+            model="openai/gpt-oss-120b",
+            quality_rank=1,
+        )
+        verifier = AIVerifier(APIConfig(api_key="gsk-test123456", attempt_plan=(attempt,)))
+        verifier._failed_combos.add(("groq", "123456", "openai/gpt-oss-120b"))
+
+        self.assertEqual(verifier._build_request_plan("ignored"), [])
 
 
 if __name__ == "__main__":

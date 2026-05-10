@@ -71,6 +71,26 @@ def write_rotation_reports(rows: list[dict]) -> tuple[Path, Path]:
     return csv_path, json_path
 
 
+def attempts_from_health(
+    attempts: tuple[AIModelAttempt, ...],
+    rows: list[dict],
+) -> tuple[AIModelAttempt, ...]:
+    by_key = {attempt.safe_tuple(): attempt for attempt in attempts}
+    selected = []
+    for row in rows:
+        if not row.get("ok") or row.get("mode") != "json":
+            continue
+        key = (
+            str(row.get("provider", "")),
+            str(row.get("key_suffix", "")),
+            str(row.get("model", "")),
+        )
+        attempt = by_key.get(key)
+        if attempt:
+            selected.append(attempt)
+    return tuple(selected)
+
+
 def _with_attempt(row: dict, attempt: AIModelAttempt) -> dict:
     row["provider"] = attempt.provider
     row["quality_rank"] = attempt.quality_rank

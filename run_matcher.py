@@ -5,6 +5,12 @@ import logging
 import os
 
 from drug_matcher.ai_health import AIKey, dedupe, run_health_checks, write_reports
+from drug_matcher.ai_rotation import configured_attempts
+from drug_matcher.ai_rotation_health import (
+    attempts_from_health,
+    run_rotation_health,
+    write_rotation_reports,
+)
 from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env, resolve_api_config, PROVIDERS
 from drug_matcher.pipeline import MatchPipeline
 
@@ -75,7 +81,50 @@ def _apply_preflight(api_cfg, rows):
     )
 
 
+def _rotation_api_config(attempts, max_tokens=512, temperature=0.1):
+    first = attempts[0] if attempts else None
+    return APIConfig(
+        api_key=first.api_key if first else "",
+        api_keys=(first.api_key,) if first else (),
+        base_url=first.base_url if first else "",
+        model=first.model if first else "",
+        fallback_models=(),
+        review_model="",
+        healthy_combos=(),
+        attempt_plan=tuple(attempts),
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
+async def _preflight_rotation(api_cfg, timeout, trace=None):
+    attempts = tuple(api_cfg.attempt_plan)
+    if not attempts:
+        return api_cfg
+    if trace and trace.enabled:
+        trace.log_ai_preflight_start([a.model for a in attempts], len(attempts))
+    rows = await run_rotation_health(
+        attempts, ["json"], timeout_s=timeout,
+        max_tokens=min(api_cfg.max_tokens, 256),
+        concurrency=min(len(attempts), 4),
+    )
+    write_rotation_reports(rows)
+    selected = attempts_from_health(attempts, rows)
+    if trace and trace.enabled:
+        trace.log_ai_preflight_result(rows, len(selected))
+    logger.info(
+        "AI rotation preflight: %s/%s healthy attempts",
+        len(selected), len(rows),
+    )
+    return _rotation_api_config(
+        selected, max_tokens=api_cfg.max_tokens,
+        temperature=api_cfg.temperature,
+    )
+
+
 async def _preflight_api(api_cfg, timeout, trace=None):
+    if api_cfg.attempt_plan:
+        return await _preflight_rotation(api_cfg, timeout, trace)
     keys = _key_items(api_cfg.api_keys)
     models = dedupe(
         [api_cfg.model] + list(api_cfg.fallback_models)
@@ -118,21 +167,24 @@ def main():
         ai_search_limit=args.ai_search_limit,
     )
 
-    resolved = resolve_api_config(
-        provider=args.provider or "",
-        model=args.model or "",
-        api_key=args.api_key or "",
-    )
-    api_cfg = APIConfig(
-        api_key=resolved["api_key"],
-        api_keys=resolved.get("api_keys", ()),
-        base_url=resolved["base_url"],
-        model=resolved["model"],
-        fallback_models=resolved.get("fallback_models", ()),
-        review_model=args.review_model or os.getenv("REVIEW_MODEL", ""),
-        max_tokens=512,
-        temperature=0.1,
-    )
+    if args.provider == "rotation":
+        api_cfg = _rotation_api_config(configured_attempts("auto"))
+    else:
+        resolved = resolve_api_config(
+            provider=args.provider or "",
+            model=args.model or "",
+            api_key=args.api_key or "",
+        )
+        api_cfg = APIConfig(
+            api_key=resolved["api_key"],
+            api_keys=resolved.get("api_keys", ()),
+            base_url=resolved["base_url"],
+            model=resolved["model"],
+            fallback_models=resolved.get("fallback_models", ()),
+            review_model=args.review_model or os.getenv("REVIEW_MODEL", ""),
+            max_tokens=512,
+            temperature=0.1,
+        )
 
     trace = None
     if args.trace:
