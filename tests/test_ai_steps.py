@@ -133,7 +133,8 @@ class TestBuildVerifyItems(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0][0], "PANADOL EXTRA")
         self.assertEqual(items[0][1], "PANADOL EXTRA 24 TAB")
-        self.assertEqual(items[0][2], 0)
+        self.assertEqual(items[0][2], "بانادول اكسترا")
+        self.assertEqual(items[0][3], 0)
 
 
 class TestGetUnmatched(unittest.TestCase):

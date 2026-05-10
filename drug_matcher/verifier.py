@@ -112,6 +112,15 @@ def _infer_is_correct(text: str) -> bool:
     return False
 
 
+def _normalize_verify_item(item: tuple) -> tuple[str, str, str, int]:
+    """Support old 3-field and current 4-field verify batch items."""
+    if len(item) == 3:
+        drug_a, drug_b, row_idx = item
+        return drug_a, drug_b, "", row_idx
+    drug_a, drug_b, drug_b_ar, row_idx = item
+    return drug_a, drug_b, drug_b_ar, row_idx
+
+
 class AIVerifier:
     """Async AI verification client with rate limiting, batching, and key/model fallback."""
 
@@ -170,70 +179,97 @@ class AIVerifier:
         """Make an API call with key+model fallback.
         Tries each (key, model) combination from the attempt plan.
         Returns parsed result dict or None if all attempts fail."""
+        if not self._cfg.api_key:
+            return None
+        close_session = False
+        if self._session is None:
+            self._session = aiohttp.ClientSession(
+                headers={
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": "https://medicompare.local",
+                    "X-Title": "MediCompare Drug Matcher",
+                },
+                timeout=aiohttp.ClientTimeout(total=30),
+            )
+            close_session = True
         model = payload.get("model", self._cfg.model)
         plan = self._build_attempt_plan(model)
 
-        for key, mdl in plan:
-            payload["model"] = mdl
-            headers = dict(self._session.headers)
-            headers["Authorization"] = f"Bearer {key}"
+        try:
+            for key, mdl in plan:
+                payload["model"] = mdl
+                headers = dict(self._session.headers)
+                headers["Authorization"] = f"Bearer {key}"
 
-            for attempt in range(max_retries + 1):
-                async with self._semaphore:
-                    try:
-                        async with self._session.post(
-                            f"{self._cfg.base_url}/chat/completions",
-                            json=payload,
-                            headers=headers,
-                        ) as resp:
-                            if resp.status == 429 and attempt < max_retries:
-                                retry_after = int(resp.headers.get("Retry-After", "10"))
-                                await asyncio.sleep(retry_after + attempt * 2)
-                                continue
-                            if resp.status != 200:
-                                text = await resp.text()
-                                log_msg = f"API error {resp.status} with model={mdl} key=...{key[-6:]}"
-                                self._fallback_log.append(log_msg)
-                                logger.warning(f"  ⚠ {log_msg}, trying next...")
-                                # Cache auth errors (401/403) to skip in future
-                                if resp.status in (401, 403):
-                                    self._failed_combos.add((key[-6:], mdl))
-                                break  # try next (key, model) combo
-                            data = await resp.json()
-                            content = data["choices"][0]["message"]["content"]
-                            result = _extract_json(content)
-                            if result is None:
-                                # Model didn't return valid JSON
-                                is_correct = _infer_is_correct(content)
+                for attempt in range(max_retries + 1):
+                    async with self._semaphore:
+                        try:
+                            async with self._session.post(
+                                f"{self._cfg.base_url}/chat/completions",
+                                json=payload,
+                                headers=headers,
+                            ) as resp:
+                                if resp.status == 429 and attempt < max_retries:
+                                    retry_after = int(
+                                        resp.headers.get("Retry-After", "10"),
+                                    )
+                                    await asyncio.sleep(retry_after + attempt * 2)
+                                    continue
+                                if resp.status != 200:
+                                    text = await resp.text()
+                                    log_msg = (
+                                        f"API error {resp.status} "
+                                        f"with model={mdl} key=...{key[-6:]}"
+                                    )
+                                    self._fallback_log.append(log_msg)
+                                    logger.warning(f"  ⚠ {log_msg}, trying next...")
+                                    # Cache auth errors (401/403) to skip in future
+                                    if resp.status in (401, 403):
+                                        self._failed_combos.add((key[-6:], mdl))
+                                    break  # try next (key, model) combo
+                                data = await resp.json()
+                                content = data["choices"][0]["message"]["content"]
+                                result = _extract_json(content)
+                                if result is None:
+                                    # Model didn't return valid JSON
+                                    is_correct = _infer_is_correct(content)
+                                    return {
+                                        "is_correct": is_correct,
+                                        "reason": content[:200],
+                                        "confidence": 0.5,
+                                    }
+                                confidence = float(result.get("confidence", 0.0))
+                                if confidence == 0.0:
+                                    is_correct = bool(result.get("is_correct", False))
+                                    confidence = 0.7 if is_correct else 0.6
                                 return {
-                                    "is_correct": is_correct,
-                                    "reason": content[:200],
-                                    "confidence": 0.5,
+                                    "is_correct": bool(result.get("is_correct", False)),
+                                    "agree": bool(result.get("agree", True)),
+                                    "reason": str(result.get("reason", "")),
+                                    "confidence": confidence,
+                                    "model_used": mdl,
+                                    "_raw": result,
                                 }
-                            confidence = float(result.get("confidence", 0.0))
-                            if confidence == 0.0:
-                                confidence = 0.7 if bool(result.get("is_correct", False)) else 0.6
-                            return {
-                                "is_correct": bool(result.get("is_correct", False)),
-                                "agree": bool(result.get("agree", True)),
-                                "reason": str(result.get("reason", "")),
-                                "confidence": confidence,
-                                "model_used": mdl,
-                                "_raw": result,
-                            }
-                    except Exception as e:
-                        if attempt < max_retries:
-                            await asyncio.sleep(2 + attempt * 2)
-                            continue
-                        log_msg = f"Exception {type(e).__name__} with model={mdl} key=...{key[-6:]}"
-                        self._fallback_log.append(log_msg)
-                        logger.warning(f"  ⚠ {log_msg}, trying next...")
-                        break  # try next combo
-        return None  # all combos exhausted
+                        except Exception as e:
+                            if attempt < max_retries:
+                                await asyncio.sleep(2 + attempt * 2)
+                                continue
+                            log_msg = (
+                                f"Exception {type(e).__name__} "
+                                f"with model={mdl} key=...{key[-6:]}"
+                            )
+                            self._fallback_log.append(log_msg)
+                            logger.warning(f"  ⚠ {log_msg}, trying next...")
+                            break  # try next combo
+            return None  # all combos exhausted
+        finally:
+            if close_session and self._session:
+                await self._session.close()
+                self._session = None
 
     async def verify_one(self, drug_a: str, drug_b: str, drug_b_ar: str = "") -> dict[str, Any]:
         """Verify a single match. Returns {is_correct, reason, confidence}."""
-        if not self._cfg.api_keys and not self._cfg.api_key:
+        if not self._cfg.api_key:
             return {"is_correct": True, "reason": "no_api_key", "confidence": 0.5}
 
         ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
@@ -256,17 +292,23 @@ class AIVerifier:
         result.pop("agree", None)
         return result
 
-    async def verify_batch(self, matches: list[tuple[str, str, str, int]]) -> list[dict[str, Any]]:
+    async def verify_batch(self, matches: list[tuple]) -> list[dict[str, Any]]:
         """Verify a batch of matches. Each item is (drug_a, drug_b, drug_b_ar, row_index)."""
-        tasks = [self.verify_one(a, b, ar) for a, b, ar, _ in matches]
+        normalized = [_normalize_verify_item(item) for item in matches]
+        tasks = [self.verify_one(a, b, ar) for a, b, ar, _ in normalized]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         out = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                out.append({"is_correct": True, "reason": f"exception:{r}", "confidence": 0.0, "row_idx": matches[i][3]})
+                out.append({
+                    "is_correct": True,
+                    "reason": f"exception:{r}",
+                    "confidence": 0.0,
+                    "row_idx": normalized[i][3],
+                })
             else:
-                r["row_idx"] = matches[i][3]
+                r["row_idx"] = normalized[i][3]
                 out.append(r)
         return out
 
