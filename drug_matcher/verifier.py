@@ -3,66 +3,21 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 import aiohttp
 
 from .config import APIConfig
+from .prompts import (
+    FRESH_REVIEW_PROMPT,
+    REVIEW_PROMPT,
+    SEARCH_PROMPT,
+    SYSTEM_PROMPT,
+    VERIFY_PROMPT,
+    render_prompt,
+)
 
 logger = logging.getLogger("medicompare")
-
-DEFAULT_SYSTEM_PROMPT = """You are a pharmaceutical product matching expert. Your job is to verify if two drug names refer to the EXACT SAME product.
-
-STRICT Rules - if ANY of these fail, the match is WRONG:
-1. BRAND NAME must be identical (e.g. "PANADOL" = "PANADOL", but "PANADOL" ≠ "PANADOL EXTRA", "VIGOTON PLUS" ≠ "VIGOTON")
-2. DOSAGE numbers must match exactly (e.g. 0.8% ≠ 0.4%, 25mg = 25mg, 10mg ≠ 20mg)
-   EXCEPTION: If Drug A (inventory) does NOT specify a dosage/strength but Drug B does (e.g. "ACHTENON 30 TABS" vs "ACHTENON 2 MG 30 TABS"), this is NOT a mismatch — inventory names are often abbreviated and omit the dosage. Only reject if BOTH specify a dosage AND they differ.
-3. QUANTITY must match (e.g. 30 tabs = 30 tabs, 20 tabs ≠ 30 tabs).
-   EXCEPTION: If Drug A (inventory) does NOT specify a quantity but Drug B does (e.g. "ACRETIN 0.05% CREAM" vs "ACRETIN 0.05% CREAM 30 GM"), this is NOT a mismatch — inventory names are often abbreviated and omit quantity/weight/volume. Only reject if BOTH specify a quantity AND they differ.
-4. VOLUME must match (e.g. 120ml = 120ml, 60ml ≠ 120ml). Same exception as quantity: missing volume in inventory name is NOT a mismatch.
-5. Different FORM is WRONG (e.g. CREAM ≠ GEL, SYRUP ≠ TABLETS, OINTMENT ≠ CREAM, FOAMING SOLUTION ≠ SACHETS)
-6. Different BRAND is WRONG (e.g. GLUCOPHAGE ≠ GLUCOLIGHT, "TOTAL COD LIVER OIL" ≠ "TOTAL")
-7. "PLUS" or "EXTRA" in one name but not the other is a MISMATCH (e.g. "VIGOTON PLUS" ≠ "VIGOTON")
-
-OK differences (minor formatting only):
-- "F.C.TAB" vs "TAB", "SACHETS" vs "SACHET", spaces, dots, hyphens
-- Additional descriptive words that don't change the product (e.g. manufacturer name, "I.M./I.V." route)
-- "EFF. GRAN. SACHETS" vs "SACHETS" (same form, different description)
-- "PICS" vs "PIECES" vs "SOFT CHEWS PIECES" (same form, different wording)
-- "CAPS" vs "CAPSULES", "TABS" vs "TABLETS", "TAB" vs "TABS."
-
-CRITICAL: You MUST include a "confidence" field in your JSON response. This is REQUIRED, not optional.
-- confidence = 1.0 if you are absolutely certain (all fields match perfectly)
-- confidence = 0.8-0.9 if you are fairly sure but there is minor ambiguity
-- confidence = 0.5-0.7 if you are unsure or it is a borderline case
-- confidence = 0.0-0.4 if you are very uncertain
-NEVER return confidence = 0.0 unless you are completely uncertain.
-
-Respond in JSON only (ALL three fields are MANDATORY):
-{"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}
-"""
-
-
-def _load_system_prompt() -> str:
-    """Load the editable AI prompt, falling back to the built-in prompt."""
-    prompt_path = Path(__file__).resolve().parent.parent / "prompt_for_ai.md"
-    try:
-        text = prompt_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return DEFAULT_SYSTEM_PROMPT
-    return text or DEFAULT_SYSTEM_PROMPT
-
-
-SYSTEM_PROMPT = _load_system_prompt()
-
-VERIFY_PROMPT = """Verify this drug match:
-
-DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}{drug_b_ar_line}
-
-Is this the SAME product? The Arabic name can help confirm the match if the English name is ambiguous. You MUST respond with JSON containing ALL three fields: is_correct, reason, and confidence (0.0-1.0)."""
-
 
 def _extract_json(text: str) -> dict | None:
     """Extract JSON from model response, handling markdown code blocks and truncation."""
@@ -287,7 +242,12 @@ class AIVerifier:
             return {"is_correct": True, "reason": "no_api_key", "confidence": 0.5}
 
         ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
-        prompt = VERIFY_PROMPT.format(drug_a=drug_a, drug_b=drug_b, drug_b_ar_line=ar_line)
+        prompt = render_prompt(
+            VERIFY_PROMPT,
+            drug_a=drug_a,
+            drug_b=drug_b,
+            drug_b_ar_line=ar_line,
+        )
         payload = {
             "model": self._cfg.model,
             "messages": [
@@ -340,30 +300,27 @@ class AIVerifier:
 
         ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
         if api_failed:
-            prompt = f"""The first AI model was UNAVAILABLE (API failure) and could NOT verify this drug match.
-No first-AI decision was made — the algorithmic match was kept by default.
-
-Please verify this match from scratch as the FIRST and ONLY AI reviewer:
-
-DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}{ar_line}
-
-Is this the SAME product? Apply the strict pharmaceutical matching rules.
-Respond in JSON only:
-{{"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}}""".format(drug_a=drug_a, drug_b=drug_b, ar_line=ar_line)
+            prompt = render_prompt(
+                FRESH_REVIEW_PROMPT,
+                drug_a=drug_a,
+                drug_b=drug_b,
+                drug_b_ar_line=ar_line,
+            )
         else:
-            prompt = f"""Review this AI decision about a drug match:
-
-DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}{ar_line}
-
-First AI decided: {"CORRECT match" if first_decision == "ai_confirmed" else "INCORRECT match"}
-First AI confidence: {first_confidence}
-First AI reason: {first_reason}
-
-Do you AGREE with the first AI? Apply the same strict pharmaceutical matching rules.
-Respond in JSON only:
-{{"agree": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}}"""
+            decision_text = (
+                "CORRECT match"
+                if first_decision == "ai_confirmed"
+                else "INCORRECT match"
+            )
+            prompt = render_prompt(
+                REVIEW_PROMPT,
+                drug_a=drug_a,
+                drug_b=drug_b,
+                drug_b_ar_line=ar_line,
+                first_decision_text=decision_text,
+                first_confidence=first_confidence,
+                first_reason=first_reason,
+            )
 
         payload = {
             "model": review_model,
@@ -423,15 +380,12 @@ Respond in JSON only:
             f"{i+1}. {c[0]['product_name_en']} / {c[0].get('product_name_ar', '')} (score={c[1]:.1f})"
             for i, c in enumerate(candidates[:5])
         )
-        prompt = f"""Given this drug from inventory: "{drug_name}"
-
-Which of these candidates is the CORRECT match? Consider brand name, dosage, quantity, and form.
-
-Candidates:
-{candidates_text}
-
-Respond in JSON: {{"best_index": 1-{min(len(candidates),5)}, "reason": "brief explanation", "confidence": 0.0-1.0}}
-If NONE are correct, set best_index to 0."""
+        prompt = render_prompt(
+            SEARCH_PROMPT,
+            drug_name=drug_name,
+            candidates_text=candidates_text,
+            max_index=min(len(candidates), 5),
+        )
 
         payload = {
             "model": self._cfg.model,

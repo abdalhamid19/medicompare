@@ -4,6 +4,13 @@ import asyncio
 import unittest
 
 from drug_matcher.config import APIConfig
+from drug_matcher.prompts import (
+    FRESH_REVIEW_PROMPT,
+    REVIEW_PROMPT,
+    SEARCH_PROMPT,
+    VERIFY_PROMPT,
+    render_prompt,
+)
 from drug_matcher.verifier import AIVerifier, SYSTEM_PROMPT
 
 
@@ -38,6 +45,20 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("B12", prompt)
         self.assertIn("FLAVOR", prompt)
         self.assertIn("IMPORTED", prompt)
+
+    def test_task_prompts_are_loaded_and_renderable(self) -> None:
+        rendered = render_prompt(
+            VERIFY_PROMPT,
+            drug_a="A",
+            drug_b="B",
+            drug_b_ar_line="",
+        )
+
+        self.assertIn("DRUG A", rendered)
+        self.assertIn("is_correct", VERIFY_PROMPT)
+        self.assertIn("best_index", SEARCH_PROMPT)
+        self.assertIn("agree", REVIEW_PROMPT)
+        self.assertIn("is_correct", FRESH_REVIEW_PROMPT)
 
 
 if __name__ == "__main__":
