@@ -2,7 +2,6 @@
 import logging
 import re
 
-import numpy as np
 import pandas as pd
 
 from .config import MatchingConfig, APIConfig, Paths, load_env
@@ -268,8 +267,13 @@ class MatchPipeline:
         return not is_ok or brand_mismatch
 
     def _nan_out_row(self, idx):
-        for col in _RESULT_COLS[2:]:
-            self._results.at[idx, col] = np.nan
+        for col in _RESULT_COLS[2:6]:
+            self._results[col] = self._results[col].astype(object)
+            self._results.at[idx, col] = ""
+        self._results.at[idx, "verified"] = "cleanup_rejected"
+        self._results.at[idx, "match_method"] = "post_cleanup"
+        self._results.at[idx, "ai_confidence"] = ""
+        self._results.at[idx, "ai_review_confidence"] = ""
 
     # --- save & stats ---
 

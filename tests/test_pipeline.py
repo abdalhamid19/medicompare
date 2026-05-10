@@ -67,9 +67,10 @@ class PipelineTests(unittest.TestCase):
 
         cleaned = pipeline.run_post_cleanup()
 
-        self.assertTrue(pd.isna(cleaned.at[0, "matched_product_name_en"]))
-        self.assertTrue(pd.isna(cleaned.at[0, "matched_store_product_id"]))
-        self.assertTrue(pd.isna(cleaned.at[0, "verified"]))
+        self.assertEqual(cleaned.at[0, "matched_product_name_en"], "")
+        self.assertEqual(cleaned.at[0, "matched_store_product_id"], "")
+        self.assertEqual(cleaned.at[0, "verified"], "cleanup_rejected")
+        self.assertEqual(cleaned.at[0, "match_method"], "post_cleanup")
 
 
 if __name__ == "__main__":
