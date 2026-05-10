@@ -81,6 +81,9 @@ python test_ai_rotation.py --providers auto --mode json --timeout 10 --concurren
 # تشغيل بنظام AI rotation بين كل providers الصالحة
 python run_matcher.py --provider rotation --trace --ai-search-limit 200
 
+# تشغيل rotation مع موديل مراجعة ثاني من rotation وتوازي 4 طلبات
+python run_matcher.py --provider rotation --review-model rotation --concurrency 4
+
 # استخدام مزود AI محدد (--provider)
 python run_ai_verify.py --provider opencode --model minimax-m2.5-free
 python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
@@ -127,6 +130,8 @@ python run_tests.py
 | `--provider` | مزود API: `rotation`, `groq`, `opencode`, `openrouter`, `custom` | من .env |
 | `--model` | نموذج AI (مثل `big-pickle`, `openai/gpt-4o-mini`) | من .env |
 | `--api-key` | مفتاح API (يتجاوز .env) | من .env |
+| `--review-model` | موديل مراجعة ثاني، أو `rotation` لاختيار reviewer من attempts الصالحة | من .env |
+| `--concurrency N` | عدد طلبات AI المتوازية ويستخدم أيضًا في preflight | 5 |
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
 | `--ai-timeout` | مهلة اختبار كل model/key في preflight بالثواني | 10 |
 | `--ai-search-limit N` | أقصى عدد unmatched يدخل مرحلة AI search | بلا حد |
@@ -150,6 +155,10 @@ python run_matcher.py --provider rotation --trace --ai-search-limit 200
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. البرنامج يختبر
 المتاح وقت التشغيل، ثم يرتب attempts حسب التوفر، جودة الموديل، الكوتا،
 والسرعة، ويبدأ بأفضل provider/model/key صالح.
+
+يمكن استخدام `--review-model rotation` مع `--provider rotation` لتشغيل مراجعة
+ثانية على قرارات AI باستخدام أفضل attempt آخر متاح قدر الإمكان. إذا لم يوجد
+إلا attempt واحد صالح، يستخدمه البرنامج كخيار أخير بدل تعطيل المراجعة بالكامل.
 
 #### `benchmark_models.py`
 

@@ -127,6 +127,7 @@ class APIConfig:
     review_model: str = field(default_factory=lambda: os.getenv("REVIEW_MODEL", ""))
     healthy_combos: tuple = ()
     attempt_plan: tuple = ()
+    review_attempt_plan: tuple = ()
     max_tokens: int = 1024
     temperature: float = 0.1
 

@@ -216,7 +216,7 @@ class AIVerifier:
 
     def _build_request_plan(self, model: str) -> list[dict[str, Any]]:
         if self._cfg.attempt_plan:
-            return self._rotation_request_plan()
+            return self._rotation_request_plan(model)
         return [
             {
                 "provider": "default",
@@ -227,9 +227,20 @@ class AIVerifier:
             for key, mdl in self._build_attempt_plan(model)
         ]
 
-    def _rotation_request_plan(self) -> list[dict[str, Any]]:
+    def _rotation_request_plan(self, requested_model: str = "") -> list[dict[str, Any]]:
+        attempts = self._cfg.attempt_plan
+        if requested_model == "rotation" and self._cfg.review_attempt_plan:
+            attempts = self._cfg.review_attempt_plan
+        elif requested_model and requested_model != self._cfg.model:
+            matching = tuple(
+                attempt for attempt in attempts
+                if attempt.model == requested_model
+            )
+            if matching:
+                attempts = matching
+
         plan = []
-        for attempt in self._cfg.attempt_plan:
+        for attempt in attempts:
             combo = (attempt.provider, attempt.key_suffix, attempt.model)
             if combo in self._failed_combos:
                 continue
@@ -419,7 +430,9 @@ class AIVerifier:
                                     "decision": "success",
                                     "reason": "parsed_json",
                                 })
-                                self._combo_failures.pop((key[-6:], mdl), None)
+                                self._combo_failures.pop(
+                                    self._combo_key(key, mdl, provider), None,
+                                )
                                 confidence = float(result.get("confidence", 0.0))
                                 if confidence == 0.0:
                                     is_correct = bool(result.get("is_correct", False))

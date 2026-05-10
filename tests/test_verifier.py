@@ -310,6 +310,69 @@ class AIVerifierTests(unittest.TestCase):
 
         self.assertEqual(verifier._build_request_plan("ignored"), [])
 
+    def test_review_rotation_uses_review_attempt_plan(self) -> None:
+        primary = AIModelAttempt(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            key_name="GROQ_API_KEY_1",
+            api_key="gsk-primary111111",
+            model="openai/gpt-oss-120b",
+            quality_rank=1,
+        )
+        reviewer = AIModelAttempt(
+            provider="openrouter",
+            base_url="https://openrouter.ai/api/v1",
+            key_name="OPENROUTER_API_KEY",
+            api_key="sk-or-review222222",
+            model="openai/gpt-4o-mini",
+            quality_rank=2,
+        )
+        cfg = APIConfig(
+            api_key=primary.api_key,
+            model=primary.model,
+            review_model="rotation",
+            attempt_plan=(primary, reviewer),
+            review_attempt_plan=(reviewer,),
+        )
+        verifier = AIVerifier(cfg)
+
+        plan = verifier._build_request_plan("rotation")
+
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["provider"], "openrouter")
+        self.assertEqual(plan[0]["model"], "openai/gpt-4o-mini")
+
+    def test_rotation_specific_review_model_filters_attempts(self) -> None:
+        primary = AIModelAttempt(
+            provider="groq",
+            base_url="https://api.groq.com/openai/v1",
+            key_name="GROQ_API_KEY_1",
+            api_key="gsk-primary111111",
+            model="openai/gpt-oss-120b",
+            quality_rank=1,
+        )
+        reviewer = AIModelAttempt(
+            provider="opencode",
+            base_url="https://opencode.ai/zen/v1",
+            key_name="OPENCODE_API_KEY_1",
+            api_key="sk-review222222",
+            model="big-pickle",
+            quality_rank=2,
+        )
+        cfg = APIConfig(
+            api_key=primary.api_key,
+            model=primary.model,
+            review_model="big-pickle",
+            attempt_plan=(primary, reviewer),
+        )
+        verifier = AIVerifier(cfg)
+
+        plan = verifier._build_request_plan("big-pickle")
+
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["provider"], "opencode")
+        self.assertEqual(plan[0]["model"], "big-pickle")
+
 
 if __name__ == "__main__":
     unittest.main()

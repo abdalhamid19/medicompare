@@ -37,6 +37,7 @@ def parse_args():
     parser.add_argument("--no-ai-preflight", action="store_true", help="Skip AI health preflight")
     parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
     parser.add_argument("--ai-search-limit", type=int, default=None, help="Maximum unmatched rows to send through AI search")
+    parser.add_argument("--concurrency", type=int, default=None, help="Maximum concurrent AI requests and preflight checks")
     return parser.parse_args()
 
 
@@ -81,23 +82,38 @@ def _apply_preflight(api_cfg, rows):
     )
 
 
-def _rotation_api_config(attempts, max_tokens=512, temperature=0.1):
+def _review_rotation_attempts(attempts):
+    if len(attempts) <= 1:
+        return tuple(attempts)
+    primary = attempts[0].safe_tuple()
+    alternates = [attempt for attempt in attempts if attempt.safe_tuple() != primary]
+    return tuple(alternates or attempts)
+
+
+def _rotation_api_config(
+    attempts, max_tokens=512, temperature=0.1, review_model="",
+):
     first = attempts[0] if attempts else None
+    review_attempt_plan = (
+        _review_rotation_attempts(tuple(attempts))
+        if review_model == "rotation" else ()
+    )
     return APIConfig(
         api_key=first.api_key if first else "",
         api_keys=(first.api_key,) if first else (),
         base_url=first.base_url if first else "",
         model=first.model if first else "",
         fallback_models=(),
-        review_model="",
+        review_model=review_model,
         healthy_combos=(),
         attempt_plan=tuple(attempts),
+        review_attempt_plan=review_attempt_plan,
         max_tokens=max_tokens,
         temperature=temperature,
     )
 
 
-async def _preflight_rotation(api_cfg, timeout, trace=None):
+async def _preflight_rotation(api_cfg, timeout, trace=None, concurrency=4):
     attempts = tuple(api_cfg.attempt_plan)
     if not attempts:
         return api_cfg
@@ -106,7 +122,7 @@ async def _preflight_rotation(api_cfg, timeout, trace=None):
     rows = await run_rotation_health(
         attempts, ["json"], timeout_s=timeout,
         max_tokens=min(api_cfg.max_tokens, 256),
-        concurrency=min(len(attempts), 4),
+        concurrency=max(1, min(len(attempts), concurrency)),
     )
     write_rotation_reports(rows)
     selected = attempts_from_health(attempts, rows)
@@ -121,12 +137,13 @@ async def _preflight_rotation(api_cfg, timeout, trace=None):
     return _rotation_api_config(
         selected, max_tokens=api_cfg.max_tokens,
         temperature=api_cfg.temperature,
+        review_model=api_cfg.review_model,
     )
 
 
-async def _preflight_api(api_cfg, timeout, trace=None):
+async def _preflight_api(api_cfg, timeout, trace=None, concurrency=4):
     if api_cfg.attempt_plan:
-        return await _preflight_rotation(api_cfg, timeout, trace)
+        return await _preflight_rotation(api_cfg, timeout, trace, concurrency)
     keys = _key_items(api_cfg.api_keys)
     models = dedupe(
         [api_cfg.model] + list(api_cfg.fallback_models)
@@ -139,7 +156,7 @@ async def _preflight_api(api_cfg, timeout, trace=None):
     rows = await run_health_checks(
         keys, models, ["json"], timeout_s=timeout,
         max_tokens=min(api_cfg.max_tokens, 256),
-        concurrency=min(len(keys) * len(models), 4),
+        concurrency=max(1, min(len(keys) * len(models), concurrency)),
         base_url=api_cfg.base_url,
     )
     write_reports(rows)
@@ -157,20 +174,24 @@ def main():
     args = parse_args()
     setup_logging(args.log_level)
     load_env()
+    ai_concurrency = max(1, args.concurrency or 5)
 
     match_cfg = MatchingConfig(
         fuzzy_threshold=args.threshold,
         brand_prefix_min=4,
         ai_verify_threshold=args.ai_threshold,
         ai_batch_size=20,
-        ai_max_concurrent=5,
+        ai_max_concurrent=ai_concurrency,
         top_k_candidates=10,
         ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.95,
         ai_search_limit=args.ai_search_limit,
     )
 
     if args.provider == "rotation":
-        api_cfg = _rotation_api_config(configured_attempts("auto"))
+        api_cfg = _rotation_api_config(
+            configured_attempts("auto"),
+            review_model=args.review_model or "",
+        )
     else:
         resolved = resolve_api_config(
             provider=args.provider or "",
@@ -194,7 +215,9 @@ def main():
         trace = MatchTraceLog(enabled=True)
 
     if not args.no_ai and not args.no_ai_preflight and api_cfg.api_key:
-        api_cfg = asyncio.run(_preflight_api(api_cfg, args.ai_timeout, trace))
+        api_cfg = asyncio.run(
+            _preflight_api(api_cfg, args.ai_timeout, trace, ai_concurrency)
+        )
 
     # Resolve start/end from --resume or explicit args
     start = args.start

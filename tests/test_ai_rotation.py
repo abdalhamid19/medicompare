@@ -7,6 +7,7 @@ from unittest.mock import patch
 from drug_matcher.ai_rotation import AIModelAttempt, configured_attempts, rank_attempts
 from drug_matcher.ai_rotation_health import rank_health_rows
 from drug_matcher.config import PROVIDERS
+from run_matcher import _rotation_api_config
 
 
 class AIRotationTests(unittest.TestCase):
@@ -71,6 +72,23 @@ class AIRotationTests(unittest.TestCase):
         self.assertEqual(ranked[0]["rotation_rank"], 1)
         self.assertGreater(ranked[0]["rotation_score"], 0)
         self.assertEqual(ranked[-1]["ok"], False)
+
+    def test_rotation_api_config_builds_separate_review_plan(self):
+        primary = AIModelAttempt(
+            "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY_1",
+            "gsk-primary111111", "openai/gpt-oss-120b", 1,
+        )
+        reviewer = AIModelAttempt(
+            "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
+            "sk-or-review222222", "openai/gpt-4o-mini", 2,
+        )
+
+        cfg = _rotation_api_config((primary, reviewer), review_model="rotation")
+
+        self.assertEqual(cfg.model, "openai/gpt-oss-120b")
+        self.assertEqual(cfg.review_model, "rotation")
+        self.assertEqual(cfg.attempt_plan, (primary, reviewer))
+        self.assertEqual(cfg.review_attempt_plan, (reviewer,))
 
 
 if __name__ == "__main__":
