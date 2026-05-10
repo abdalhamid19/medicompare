@@ -76,6 +76,12 @@ python test_opencode_models.py --mode both --timeout 20 --concurrency 4
 # تشغيل آمن: preflight تلقائي + حد أقصى لبحث AI
 python run_matcher.py --provider opencode --trace --ai-search-limit 200
 
+# اختبار كل مزودي AI المتاحين وترتيبهم للـ rotation
+python test_ai_rotation.py --providers auto --mode json --timeout 10 --concurrency 4
+
+# تشغيل بنظام AI rotation بين كل providers الصالحة
+python run_matcher.py --provider rotation --trace --ai-search-limit 200
+
 # استخدام مزود AI محدد (--provider)
 python run_ai_verify.py --provider opencode --model minimax-m2.5-free
 python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
@@ -119,7 +125,7 @@ python run_tests.py
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 | `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 | `--no-ai` | تخطي AI (مطابقة خوارزمية فقط بدون تحقق أو بحث) | معطل |
-| `--provider` | مزود API: `opencode`, `openrouter`, `agentrouter`, `custom` | من .env |
+| `--provider` | مزود API: `rotation`, `groq`, `opencode`, `openrouter`, `agentrouter`, `custom` | من .env |
 | `--model` | نموذج AI (مثل `big-pickle`, `openai/gpt-4o-mini`) | من .env |
 | `--api-key` | مفتاح API (يتجاوز .env) | من .env |
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
@@ -136,10 +142,15 @@ python run_tests.py
 
 ```bash
 python test_opencode_models.py --mode both --timeout 20 --concurrency 4
-python run_matcher.py --provider opencode --trace --ai-search-limit 200
+python test_ai_rotation.py --providers auto --mode json --timeout 10 --concurrency 4
+python run_matcher.py --provider rotation --trace --ai-search-limit 200
 ```
 
 مرحلة AI search لا ترسل كل `no_match` إلى النموذج. يتم إرسال الحالات التي لديها مرشحين أقوياء وآمنين فقط، مع الاحتفاظ بقواعد الرفض الخوارزمية مثل اختلاف الشكل أو الجرعة أو route أو imported/local.
+
+في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. البرنامج يختبر
+المتاح وقت التشغيل، ثم يرتب attempts حسب التوفر، جودة الموديل، الكوتا،
+والسرعة، ويبدأ بأفضل provider/model/key صالح.
 
 #### `benchmark_models.py`
 
@@ -261,6 +272,8 @@ pytest tests/test_indexer.py  # اختبار واحد
 | المزود | `--provider` | Base URL | النموذج الافتراضي |
 |---|---|---|---|
 | OpenCode Zen | `opencode` | `opencode.ai/zen/v1` | `big-pickle` |
+| Groq | `groq` | `api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
+| Rotation | `rotation` | يختار تلقائيًا | أفضل attempt صالح |
 | OpenRouter | `openrouter` | `openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
 | AgentRouter | `agentrouter` | `agentrouter.org/v1` | `glm-5.1` |
 | مخصص | `custom` | من .env | من .env |

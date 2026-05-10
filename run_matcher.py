@@ -102,7 +102,7 @@ async def _preflight_rotation(api_cfg, timeout, trace=None):
     if not attempts:
         return api_cfg
     if trace and trace.enabled:
-        trace.log_ai_preflight_start([a.model for a in attempts], len(attempts))
+        trace.log_rotation_preflight_start(len(attempts))
     rows = await run_rotation_health(
         attempts, ["json"], timeout_s=timeout,
         max_tokens=min(api_cfg.max_tokens, 256),
@@ -111,6 +111,8 @@ async def _preflight_rotation(api_cfg, timeout, trace=None):
     write_rotation_reports(rows)
     selected = attempts_from_health(attempts, rows)
     if trace and trace.enabled:
+        for row in rows:
+            trace.log_rotation_ranked_attempt(row)
         trace.log_ai_preflight_result(rows, len(selected))
     logger.info(
         "AI rotation preflight: %s/%s healthy attempts",

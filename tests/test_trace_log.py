@@ -121,6 +121,45 @@ class TraceLogTests(unittest.TestCase):
         self.assertEqual(trace._rows[1]["decision"], "healthy")
         self.assertIn("healthy_combos=1", trace._rows[1]["selection_reason"])
 
+    def test_rotation_events_are_traceable(self) -> None:
+        trace = MatchTraceLog(enabled=True)
+        trace.log_rotation_preflight_start(3)
+        trace.log_rotation_ranked_attempt({
+            "ok": True,
+            "provider": "groq",
+            "model": "openai/gpt-oss-120b",
+            "key_suffix": "abc123",
+            "rotation_rank": 1,
+            "rotation_score": 150.0,
+            "http_status": 200,
+        })
+
+        self.assertEqual(trace._rows[0]["step"], "rotation_preflight_start")
+        self.assertEqual(trace._rows[1]["provider_used"], "groq")
+        self.assertEqual(trace._rows[1]["model_used"], "openai/gpt-oss-120b")
+
+    def test_rotation_api_attempt_adds_usage_event(self) -> None:
+        trace = MatchTraceLog(enabled=True)
+        comp = parse_drug("PANADOL 20 TAB")
+
+        trace.log_api_attempts(
+            "D-1", "PANADOL 20 TAB", comp.normalized, comp.brand,
+            [{
+                "attempt": 1,
+                "provider": "groq",
+                "model": "openai/gpt-oss-120b",
+                "status": 200,
+                "fallback_used": False,
+                "decision": "success",
+                "key_suffix": "abc123",
+                "reason": "parsed_json",
+            }],
+        )
+
+        self.assertEqual(trace._rows[0]["step"], "api_attempt")
+        self.assertEqual(trace._rows[1]["step"], "rotation_attempt_used")
+        self.assertEqual(trace._rows[1]["provider_used"], "groq")
+
     def test_post_cleanup_rejection_is_logged(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
         pipeline._trace = MatchTraceLog(enabled=True)

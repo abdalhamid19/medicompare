@@ -14,7 +14,7 @@ _TRACE_CSV_COLS = [
     "candidate_rank", "candidate_source",
     "threshold_name", "threshold_value",
     "api_attempt", "api_status", "model_used", "fallback_used",
-    "parse_failed",
+    "parse_failed", "provider_used",
     "drug_code", "drug_name", "norm", "brand",
     "step", "candidate_name", "candidate_id",
     "candidate_brand", "candidate_norm",
@@ -29,7 +29,7 @@ _TRACE_CSV_COLS = [
 _SUMMARY_COLS = [
     "code", "drug_name", "final_status", "final_match",
     "failure_stage", "primary_reason", "best_rejected_candidate",
-    "ai_action",
+    "ai_action", "ai_provider_model",
 ]
 
 
@@ -62,7 +62,7 @@ class MatchTraceLog:
             "candidate_source": "", "threshold_name": "",
             "threshold_value": "", "api_attempt": "",
             "api_status": "", "model_used": "", "fallback_used": "",
-            "parse_failed": "",
+            "parse_failed": "", "provider_used": "",
             "drug_code": code, "drug_name": name,
             "norm": norm, "brand": brand,
             "step": "", "candidate_name": "",
@@ -592,6 +592,39 @@ class MatchTraceLog:
             counts[key] = counts.get(key, 0) + 1
         return "; ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
 
+    def log_rotation_preflight_start(self, attempts_count):
+        self._append(
+            "", "", "", "",
+            step="rotation_preflight_start",
+            phase="ai_rotation",
+            decision="started",
+            decision_source="ai_rotation",
+            selection_reason=f"testing {attempts_count} provider/key/model attempts",
+        )
+
+    def log_rotation_ranked_attempt(self, row):
+        self._append(
+            "", "", "", "",
+            step="rotation_ranked_attempt",
+            phase="ai_rotation",
+            decision="healthy" if row.get("ok") else "failed",
+            decision_source="ai_rotation",
+            provider_used=row.get("provider", ""),
+            model_used=row.get("model", ""),
+            candidate_rank=row.get("rotation_rank", ""),
+            api_status=row.get("http_status", ""),
+            error_stage="" if row.get("ok") else "ai_rotation",
+            error_code="" if row.get("ok") else row.get("error_type", ""),
+            selection_reason=(
+                f"rank={row.get('rotation_rank')} "
+                f"provider={row.get('provider')} "
+                f"model={row.get('model')} "
+                f"key=...{row.get('key_suffix', '')} "
+                f"score={row.get('rotation_score')} "
+                f"reset={row.get('quota_reset_in') or row.get('retry_after_in') or 'n/a'}"
+            ),
+        )
+
     def log_api_attempts(self, code, name, norm, brand, attempts, row_index=""):
         if not self._enabled:
             return
@@ -606,6 +639,7 @@ class MatchTraceLog:
                 api_attempt=item.get("attempt", ""),
                 api_status=item.get("status", ""),
                 model_used=item.get("model", ""),
+                provider_used=item.get("provider", ""),
                 fallback_used=str(bool(item.get("fallback_used"))).lower(),
                 parse_failed=str(bool(item.get("parse_failed"))).lower(),
             )
@@ -616,6 +650,38 @@ class MatchTraceLog:
             key_txt = f" key=...{suffix}" if suffix else ""
             row["selection_reason"] = f"{item.get('reason', '')}{key_txt}"
             self._rows.append(row)
+            self._append_rotation_attempt_event(code, name, norm, brand, item, row_index)
+
+    def _append_rotation_attempt_event(
+        self, code, name, norm, brand, item, row_index="",
+    ):
+        provider = item.get("provider", "")
+        if not provider:
+            return
+        decision = item.get("decision", "")
+        if decision == "success":
+            step = "rotation_attempt_used"
+        elif decision == "disabled":
+            step = "rotation_attempt_disabled"
+        else:
+            return
+        self._append(
+            code, name, norm, brand,
+            row_index=row_index, phase="ai_rotation",
+            step=step, decision=decision,
+            decision_source="ai_rotation",
+            provider_used=provider,
+            model_used=item.get("model", ""),
+            api_status=item.get("status", ""),
+            error_stage=item.get("error_stage", ""),
+            error_code=item.get("error_code", ""),
+            selection_reason=(
+                f"{step}: provider={provider} "
+                f"model={item.get('model', '')} "
+                f"key=...{item.get('key_suffix', '')} "
+                f"reason={item.get('reason', '')}"
+            ),
+        )
 
     def log_ai_parse_failure(
         self, code, name, norm, brand, raw_excerpt,
@@ -741,6 +807,7 @@ class MatchTraceLog:
             "primary_reason": reason,
             "best_rejected_candidate": best_rejected,
             "ai_action": ai_rows[-1].get("ai_result", "") if ai_rows else "",
+            "ai_provider_model": self._provider_model(rows),
         }
 
     @staticmethod
@@ -758,6 +825,15 @@ class MatchTraceLog:
             }:
                 return row
         return None
+
+    @staticmethod
+    def _provider_model(rows):
+        for row in reversed(rows):
+            provider = row.get("provider_used")
+            model = row.get("model_used") or row.get("ai_model")
+            if provider or model:
+                return f"{provider}/{model}".strip("/")
+        return ""
 
     def _save_txt(self, path: Path):
         with open(path, "w", encoding="utf-8") as f:
@@ -928,6 +1004,10 @@ class MatchTraceLog:
                 f"  [AI SEARCH] NOT ELIGIBLE: "
                 f"{row['selection_reason']}\n",
             )
+        elif step in {"rotation_preflight_start", "rotation_ranked_attempt"}:
+            f.write(f"  [AI ROTATION] {row['selection_reason']}\n")
+        elif step in {"rotation_attempt_used", "rotation_attempt_disabled"}:
+            f.write(f"  [AI ROTATION] {row['selection_reason']}\n")
         elif step in {"ai_preflight_start", "ai_preflight_result"}:
             f.write(f"  [AI PREFLIGHT] {row['selection_reason']}\n")
         elif step == "api_attempt":
