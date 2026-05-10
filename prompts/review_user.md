@@ -1,7 +1,10 @@
 Review this AI decision about a drug match:
 
 DRUG A (from inventory): $drug_a
+DRUG A parsed context: $drug_a_context
+
 DRUG B (from tawreed): $drug_b$drug_b_ar_line
+DRUG B parsed context: $drug_b_context
 
 First AI decided: $first_decision_text
 First AI confidence: $first_confidence

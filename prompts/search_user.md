@@ -1,4 +1,5 @@
 Given this drug from inventory: "$drug_name"
+Inventory parsed context: $inventory_context
 
 Which of these candidates is the CORRECT match? Consider brand name, dosage,
 quantity, volume, weight, form, route, variants, import status, and flavor.

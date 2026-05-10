@@ -135,6 +135,8 @@ class TestBuildVerifyItems(unittest.TestCase):
         self.assertEqual(items[0][1], "PANADOL EXTRA 24 TAB")
         self.assertEqual(items[0][2], "بانادول اكسترا")
         self.assertEqual(items[0][3], 0)
+        self.assertEqual(items[0][4], 85.0)
+        self.assertEqual(items[0][5], "brand_index")
 
 
 class TestGetUnmatched(unittest.TestCase):

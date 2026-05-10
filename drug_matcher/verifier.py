@@ -8,6 +8,7 @@ from typing import Any
 import aiohttp
 
 from .config import APIConfig
+from .normalizer import parse_drug
 from .prompts import (
     FRESH_REVIEW_PROMPT,
     REVIEW_PROMPT,
@@ -81,13 +82,52 @@ def _infer_is_correct(text: str) -> bool:
     return False
 
 
-def _normalize_verify_item(item: tuple) -> tuple[str, str, str, int]:
-    """Support old 3-field and current 4-field verify batch items."""
+def _route_from_norm(norm: str) -> str:
+    words = set(norm.split())
+    routes = set(words & {"IM", "IV", "SC"})
+    if {"I", "M"} <= words:
+        routes.add("IM")
+    if {"I", "V"} <= words:
+        routes.add("IV")
+    if {"S", "C"} <= words:
+        routes.add("SC")
+    return "/".join(sorted(routes)) or "-"
+
+
+def _component_context(name: str) -> str:
+    c = parse_drug(name)
+    return (
+        f"normalized='{c.normalized}', brand='{c.brand}', "
+        f"dosage={c.dosage_nums or '-'}, qty='{c.qty or '-'}', "
+        f"volume='{c.volume or '-'}', weight='{c.weight or '-'}', "
+        f"form='{c.form or '-'}', flavor='{c.flavor or '-'}', "
+        f"route='{_route_from_norm(c.normalized)}', "
+        f"imported={'yes' if c.imported else 'no'}"
+    )
+
+
+def _format_candidate(position: int, candidate: tuple[dict, float, int]) -> str:
+    rec, score, _ = candidate
+    price = rec.get("price")
+    price_text = f", price={price}" if price not in (None, "") else ""
+    return (
+        f"{position}. {rec['product_name_en']} / "
+        f"{rec.get('product_name_ar', '')} "
+        f"(score={score:.1f}{price_text})\n"
+        f"   parsed: {_component_context(rec['product_name_en'])}"
+    )
+
+
+def _normalize_verify_item(item: tuple) -> tuple[str, str, str, int, str, str]:
+    """Support old verify items plus optional score/method context."""
     if len(item) == 3:
         drug_a, drug_b, row_idx = item
-        return drug_a, drug_b, "", row_idx
-    drug_a, drug_b, drug_b_ar, row_idx = item
-    return drug_a, drug_b, drug_b_ar, row_idx
+        return drug_a, drug_b, "", row_idx, "", ""
+    if len(item) == 4:
+        drug_a, drug_b, drug_b_ar, row_idx = item
+        return drug_a, drug_b, drug_b_ar, row_idx, "", ""
+    drug_a, drug_b, drug_b_ar, row_idx, score, method = item
+    return drug_a, drug_b, drug_b_ar, row_idx, score, method
 
 
 class AIVerifier:
@@ -236,17 +276,26 @@ class AIVerifier:
                 await self._session.close()
                 self._session = None
 
-    async def verify_one(self, drug_a: str, drug_b: str, drug_b_ar: str = "") -> dict[str, Any]:
+    async def verify_one(
+        self, drug_a: str, drug_b: str, drug_b_ar: str = "",
+        algo_score="", algo_method="",
+    ) -> dict[str, Any]:
         """Verify a single match. Returns {is_correct, reason, confidence}."""
         if not self._cfg.api_key:
             return {"is_correct": True, "reason": "no_api_key", "confidence": 0.5}
 
         ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
+        algorithm_context = (
+            f"score={algo_score or '-'}, method={algo_method or '-'}"
+        )
         prompt = render_prompt(
             VERIFY_PROMPT,
             drug_a=drug_a,
             drug_b=drug_b,
             drug_b_ar_line=ar_line,
+            drug_a_context=_component_context(drug_a),
+            drug_b_context=_component_context(drug_b),
+            algorithm_context=algorithm_context,
         )
         payload = {
             "model": self._cfg.model,
@@ -269,7 +318,10 @@ class AIVerifier:
     async def verify_batch(self, matches: list[tuple]) -> list[dict[str, Any]]:
         """Verify a batch of matches. Each item is (drug_a, drug_b, drug_b_ar, row_index)."""
         normalized = [_normalize_verify_item(item) for item in matches]
-        tasks = [self.verify_one(a, b, ar) for a, b, ar, _ in normalized]
+        tasks = [
+            self.verify_one(a, b, ar, score, method)
+            for a, b, ar, _, score, method in normalized
+        ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         out = []
@@ -305,6 +357,8 @@ class AIVerifier:
                 drug_a=drug_a,
                 drug_b=drug_b,
                 drug_b_ar_line=ar_line,
+                drug_a_context=_component_context(drug_a),
+                drug_b_context=_component_context(drug_b),
             )
         else:
             decision_text = (
@@ -317,6 +371,8 @@ class AIVerifier:
                 drug_a=drug_a,
                 drug_b=drug_b,
                 drug_b_ar_line=ar_line,
+                drug_a_context=_component_context(drug_a),
+                drug_b_context=_component_context(drug_b),
                 first_decision_text=decision_text,
                 first_confidence=first_confidence,
                 first_reason=first_reason,
@@ -377,12 +433,13 @@ class AIVerifier:
             return None
 
         candidates_text = "\n".join(
-            f"{i+1}. {c[0]['product_name_en']} / {c[0].get('product_name_ar', '')} (score={c[1]:.1f})"
+            _format_candidate(i + 1, c)
             for i, c in enumerate(candidates[:5])
         )
         prompt = render_prompt(
             SEARCH_PROMPT,
             drug_name=drug_name,
+            inventory_context=_component_context(drug_name),
             candidates_text=candidates_text,
             max_index=min(len(candidates), 5),
         )

@@ -156,7 +156,14 @@ def _select_for_verification(results, cfg):
 
 def _build_verify_items(to_verify):
     return [
-        (row["drug_name"], row["matched_product_name_en"], row.get("matched_product_name_ar", ""), idx)
+        (
+            row["drug_name"],
+            row["matched_product_name_en"],
+            row.get("matched_product_name_ar", ""),
+            idx,
+            row.get("match_score", ""),
+            row.get("match_method", ""),
+        )
         for idx, row in to_verify.iterrows()
     ]
 
