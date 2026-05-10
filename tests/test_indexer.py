@@ -95,6 +95,24 @@ class DrugIndexTests(unittest.TestCase):
         self.assertEqual(score, 0.0)
         self.assertEqual(method, "no_match")
 
+    def test_best_match_rejects_missing_b12_variant(self) -> None:
+        tawreed = pd.DataFrame(
+            [
+                {
+                    "product_name_ar": "فيروجلوبين",
+                    "product_name_en": "FEROGLOBIN 30 CAPS",
+                    "store_product_id": "T-1",
+                },
+            ]
+        )
+        index = DrugIndex(tawreed, MatchingConfig(fuzzy_threshold=65))
+
+        record, score, method = index.best_match("FEROGLOBIN B12 30 CAP")
+
+        self.assertIsNone(record)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(method, "no_match")
+
     def test_fuzzy_match_returns_ranked_candidates_above_threshold(self) -> None:
         index = make_index(threshold=65)
 

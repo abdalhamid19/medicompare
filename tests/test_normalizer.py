@@ -14,6 +14,7 @@ class NormalizerTests(unittest.TestCase):
             ("OMEPRAZOLE 21-CAP", "OMEPRAZOLE 21 CAP"),
             ("GYNOCONAZOLE 0.8% CREAM", "GYNOCONAZOLE 0.8% CREAM"),
             ("VITAMIN D 1.000IU", "VITAMIN D 1000 IU"),
+            ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN B12 30 CAP"),
         ]
         for raw, expected in cases:
             with self.subTest(raw=raw):
@@ -42,6 +43,7 @@ class NormalizerTests(unittest.TestCase):
             ("GYNOCONAZOLE 0.8%", "GYNOCONAZOL 0.4%", "different_dosage"),
             ("CLOZAPINE 100 MG 30 TABS", "CLOZAPEX 100 MG 50 TAB", "different_brand"),
             ("TOTAL COD LIVER OIL 120 ML SYP", "TOTAL SYRUP 120 ML", "different_brand"),
+            ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN 30 CAPS", "different_modifier"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):

@@ -36,7 +36,7 @@ FLAVOR_WORDS = frozenset({
 })
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
-    "SINUS", "IMP", "IMPORTED", "D",
+    "SINUS", "IMP", "IMPORTED", "D", "B12",
 })
 
 @dataclass(slots=True)
@@ -57,7 +57,12 @@ _DOSAGE_RE = re.compile(
     re.IGNORECASE,
 )
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
-_QTY_RE = re.compile(r"(\d+)\s*(TAB|TABS|CAP|CAPS|SACHET|SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|PACKETS)\b", re.IGNORECASE)
+_QTY_RE = re.compile(
+    r"(\d+)\s*"
+    r"(TAB|TABS|CAP|CAPS|SACHET|SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|"
+    r"CARTRIDGE|GUMMIES|GUM|PACKETS)\b",
+    re.IGNORECASE,
+)
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
 _NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*(IMP|IMPORTED)?\s*", re.IGNORECASE)
 
@@ -71,6 +76,7 @@ def normalize(name: str) -> str:
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
     name = re.sub(r"(?<=\d)([A-Z])", r" \1", name)
+    name = re.sub(r"\bB\s+12\b", "B12", name)
     name = re.sub(r"\s*[\\/]\s*", " / ", name)
     # Handle European decimal notation BEFORE removing dots: "1.000" IU means 1000
     name = re.sub(r'(\d)\.(\d{3})\s*(I\.?U\.?|IU|MCG|MG)', r'\1\2 \3', name)
