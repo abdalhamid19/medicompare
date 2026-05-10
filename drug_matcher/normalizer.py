@@ -34,9 +34,12 @@ BRAND_QUALIFIERS = frozenset({"INFINITY", "SURACTIVE"})
 FLAVOR_WORDS = frozenset({
     "BANANA", "ORANGE", "PINEAPPLE", "STRAWBERRY",
 })
+VITAMIN_MODIFIERS = frozenset({
+    "B1", "B2", "B6", "B12", "D3",
+})
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
-    "SINUS", "IMP", "IMPORTED", "D", "B12",
+    "SINUS", "IMP", "IMPORTED", "D",
 })
 
 @dataclass(slots=True)
@@ -76,7 +79,7 @@ def normalize(name: str) -> str:
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
     name = re.sub(r"(?<=\d)([A-Z])", r" \1", name)
-    name = re.sub(r"\bB\s+12\b", "B12", name)
+    name = re.sub(r"\b([BD])\s+(3|6|12)\b", r"\1\2", name)
     name = re.sub(r"\s*[\\/]\s*", " / ", name)
     # Handle European decimal notation BEFORE removing dots: "1.000" IU means 1000
     name = re.sub(r'(\d)\.(\d{3})\s*(I\.?U\.?|IU|MCG|MG)', r'\1\2 \3', name)
@@ -169,8 +172,10 @@ def components_match(
     d_clean = re.sub(r"[^A-Z0-9]", "", d.brand)
     m_clean = re.sub(r"[^A-Z0-9]", "", m.brand)
 
-    for modifier in CRITICAL_MODIFIERS:
-        if (modifier in d.normalized.split()) != (modifier in m.normalized.split()):
+    d_words = set(d.normalized.split())
+    m_words = set(m.normalized.split())
+    for modifier in CRITICAL_MODIFIERS | VITAMIN_MODIFIERS:
+        if (modifier in d_words) != (modifier in m_words):
             return False, "different_modifier"
 
     if d_clean and m_clean:
