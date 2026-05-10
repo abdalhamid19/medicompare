@@ -84,6 +84,8 @@ class AIVerifierTests(unittest.TestCase):
                     "PANADOL 20 TABLETS",
                     algo_score=88,
                     algo_method="brand_index",
+                    inventory_price="34",
+                    candidate_price="34",
                 )
             )
 
@@ -92,6 +94,10 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("normalized='PANADOL 20 TAB'", user_prompt)
         self.assertIn("score=88", user_prompt)
         self.assertIn("method=brand_index", user_prompt)
+        self.assertIn("Price context", user_prompt)
+        self.assertIn("inventory=34", user_prompt)
+        self.assertIn("candidate=34", user_prompt)
+        self.assertIn("delta=0.0%", user_prompt)
 
     def test_search_prompt_includes_candidate_context(self) -> None:
         verifier = AIVerifier(APIConfig(api_key="test-key"))
@@ -109,15 +115,50 @@ class AIVerifierTests(unittest.TestCase):
             result = asyncio.run(
                 verifier.find_better_match(
                     "PANADOL 20 TAB",
-                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                    [
+                        ({
+                            "product_name_en": "PANADOL 20 TABLETS",
+                            "price": 34,
+                        }, 90.0, 0),
+                    ],
+                    inventory_price="34",
                 )
             )
 
         user_prompt = captured["payload"]["messages"][1]["content"]
         self.assertIsNotNone(result)
         self.assertIn("Inventory parsed context", user_prompt)
+        self.assertIn("Inventory price: 34", user_prompt)
+        self.assertIn("candidate_price=34", user_prompt)
+        self.assertIn("price_delta=0.0%", user_prompt)
         self.assertIn("parsed:", user_prompt)
         self.assertIn("PANADOL 20 TABLETS", user_prompt)
+
+    def test_review_prompts_include_price_context(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))
+        captured = {}
+
+        async def fake_call(self, payload):
+            captured["payload"] = payload
+            return {"agree": True, "reason": "ok", "confidence": 0.9}
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            asyncio.run(
+                verifier.review_one(
+                    "PANADOL 20 TAB",
+                    "PANADOL 20 TABLETS",
+                    "ai_confirmed",
+                    0.8,
+                    "first ok",
+                    inventory_price="34",
+                    candidate_price="35",
+                )
+            )
+
+        user_prompt = captured["payload"]["messages"][1]["content"]
+        self.assertIn("Price context", user_prompt)
+        self.assertIn("inventory=34", user_prompt)
+        self.assertIn("candidate=35", user_prompt)
 
     def test_invalid_json_fallback_is_low_confidence_and_traceable(self) -> None:
         result = _fallback_from_unparseable_response(

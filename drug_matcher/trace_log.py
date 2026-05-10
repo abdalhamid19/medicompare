@@ -164,7 +164,7 @@ class MatchTraceLog:
     def log_ai_verify_sent(
         self, code, name, norm, brand, score, threshold,
         matched_name, matched_brand, method,
-        ai_model="",
+        ai_model="", price_context="",
     ):
         if not self._enabled:
             return
@@ -183,6 +183,8 @@ class MatchTraceLog:
             f"score={round(score, 1)} < ai_threshold={threshold}"
             f" -> sent to AI model={ai_model} to verify correctness"
         )
+        if price_context:
+            row["selection_reason"] += f" | price_context={price_context}"
         self._rows.append(row)
 
     def log_ai_verify_result(
@@ -219,7 +221,7 @@ class MatchTraceLog:
     def log_ai_search_sent(
         self, code, name, norm, brand,
         n_candidates, candidate_names,
-        ai_model="",
+        ai_model="", price_context="",
     ):
         if not self._enabled:
             return
@@ -232,6 +234,8 @@ class MatchTraceLog:
             f"no_match + {n_candidates} candidates found"
             f" -> sent to AI model={ai_model} to pick best match"
         )
+        if price_context:
+            row["selection_reason"] += f" | price_context={price_context}"
         self._rows.append(row)
 
     def log_ai_search_result(
@@ -263,6 +267,7 @@ class MatchTraceLog:
         self, code, name, norm, brand,
         first_decision, first_confidence, matched_name,
         first_model="", review_model="", api_failed=False,
+        price_context="",
     ):
         if not self._enabled:
             return
@@ -285,6 +290,8 @@ class MatchTraceLog:
                 f" confidence={round(float(first_confidence), 2) if first_confidence not in (None, '') else 'N/A'}"
                 f" < review_threshold -> sent to review model={review_model}"
             )
+        if price_context:
+            row["selection_reason"] += f" | price_context={price_context}"
         self._rows.append(row)
 
     def log_ai_review_result(

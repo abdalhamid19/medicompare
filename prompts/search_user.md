@@ -1,8 +1,10 @@
 Given this drug from inventory: "$drug_name"
 Inventory parsed context: $inventory_context
+Inventory price: $inventory_price
 
 Which of these candidates is the CORRECT match? Consider brand name, dosage,
 quantity, volume, weight, form, route, variants, import status, and flavor.
+Use price only as a tie-breaker between otherwise compatible candidates.
 
 Candidates:
 $candidates_text

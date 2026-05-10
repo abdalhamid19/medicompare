@@ -5,6 +5,7 @@ from collections import defaultdict
 import pandas as pd
 from rapidfuzz import fuzz, process
 
+from .pricing import parse_price
 from .normalizer import (
     normalize, parse_drug, DrugComponents, components_match,
     OCULAR_FORMS,
@@ -206,16 +207,7 @@ class DrugIndex:
 
     @staticmethod
     def _parse_price(value) -> float | None:
-        if value is None:
-            return None
-        text = str(value).strip().replace(",", "")
-        if not text or text.lower() in {"nan", "none", "null"}:
-            return None
-        try:
-            price = float(text)
-        except ValueError:
-            return None
-        return price if price > 0 else None
+        return parse_price(value)
 
     def _price_bonus(self, query_price, idx: int) -> float:
         query_price = self._parse_price(query_price)

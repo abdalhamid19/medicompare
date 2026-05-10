@@ -8,6 +8,7 @@ DRUG A parsed context: $drug_a_context
 
 DRUG B (from tawreed): $drug_b$drug_b_ar_line
 DRUG B parsed context: $drug_b_context
+Price context: $price_context
 
 Is this the SAME product? Apply the strict pharmaceutical matching rules.
 

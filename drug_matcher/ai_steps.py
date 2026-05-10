@@ -7,12 +7,23 @@ from rapidfuzz import fuzz, process
 from .config import MatchingConfig, APIConfig
 from .normalizer import parse_drug, components_match
 from .indexer import DrugIndex
+from .pricing import price_context
 from .verifier import AIVerifier
 
 logger = logging.getLogger("medicompare")
 
 _AI_SEARCH_ACCEPT_CONFIDENCE = 0.75
 _AI_REVIEW_OVERRIDE_CONFIDENCE = 0.75
+
+
+def _internal_value(results: pd.DataFrame, idx, col: str, default=""):
+    return results.at[idx, col] if col in results.columns else default
+
+
+def _set_internal_matched_price(results: pd.DataFrame, idx, value):
+    if "_matched_price" in results.columns:
+        results["_matched_price"] = results["_matched_price"].astype(object)
+    results.at[idx, "_matched_price"] = value
 
 
 async def run_ai_verification(
@@ -47,6 +58,10 @@ async def run_ai_verification(
                 row["matched_product_name_en"],
                 parsed.brand, row["match_method"],
                 ai_model=api_cfg.model,
+                price_context=price_context(
+                    row.get("_drug_price", ""),
+                    row.get("_matched_price", ""),
+                ),
             )
     items = _build_verify_items(to_verify)
     async with AIVerifier(
@@ -98,6 +113,10 @@ async def run_ai_review(
                 first_model=api_cfg.model,
                 review_model=api_cfg.review_model,
                 api_failed=is_api_failed,
+                price_context=price_context(
+                    row.get("_drug_price", ""),
+                    row.get("_matched_price", ""),
+                ),
             )
     items = _build_review_items(to_review)
     async with AIVerifier(
@@ -166,6 +185,8 @@ def _build_verify_items(to_verify):
             idx,
             row.get("match_score", ""),
             row.get("match_method", ""),
+            row.get("_drug_price", ""),
+            row.get("_matched_price", ""),
         )
         for idx, row in to_verify.iterrows()
     ]
@@ -235,7 +256,10 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
         )[0]
     ]
     if valid:
-        ai_result = await verifier.find_better_match(drug_name, valid)
+        ai_result = await verifier.find_better_match(
+            drug_name, valid,
+            inventory_price=_internal_value(results, idx, "_drug_price"),
+        )
         if ai_result and ai_result.get("record"):
             _apply_correction(results, idx, ai_result)
             if trace and trace.enabled:
@@ -282,13 +306,16 @@ def _apply_correction(results, idx, ai_result):
     results.at[idx, "verified"] = "ai_corrected"
     results.at[idx, "match_method"] = "ai_verified"
     results.at[idx, "ai_confidence"] = round(ai_result.get("confidence", 0), 2)
+    _set_internal_matched_price(results, idx, rec.get("price", ""))
 
 
 def _clear_match(results, idx):
     for col in (
         "matched_product_name_en", "matched_product_name_ar",
-        "matched_store_product_id", "match_score",
+        "matched_store_product_id", "match_score", "_matched_price",
     ):
+        if col not in results.columns:
+            continue
         results[col] = results[col].astype(object)
         results.at[idx, col] = ""
 
@@ -327,7 +354,8 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 "search", "norm too short for AI search",
             )
         return 0
-    candidates = _search_candidates(parsed, norm, index, cfg)
+    price = row.get("_drug_price", "")
+    candidates = _search_candidates(parsed, norm, index, cfg, price)
     if not candidates:
         if trace and trace.enabled:
             trace.log_ai_skip(
@@ -343,8 +371,11 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             code, drug_name, norm, parsed.brand,
             len(candidates), cand_names,
             ai_model=verifier._cfg.model,
+            price_context=price_context(price, None),
         )
-    ai_result = await verifier.find_better_match(drug_name, candidates)
+    ai_result = await verifier.find_better_match(
+        drug_name, candidates, inventory_price=price,
+    )
     confidence = ai_result.get("confidence", 0) if ai_result else 0
     if (
         ai_result and ai_result.get("record")
@@ -372,9 +403,11 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
     return 0
 
 
-def _search_candidates(parsed, norm, index, cfg):
+def _search_candidates(parsed, norm, index, cfg, price=None):
     """Gather fuzzy + brand candidates for unmatched search."""
     candidates = []
+    for idx, score in index.get_candidates(parsed, limit=5, price=price):
+        candidates.append((index.get_record(idx), score, idx))
     for scorer in [fuzz.token_set_ratio, fuzz.token_sort_ratio]:
         results = process.extract(
             norm, index.norms,
@@ -416,6 +449,7 @@ def _apply_search_result(results, idx, ai_result):
     results.at[idx, "verified"] = "ai_found"
     results.at[idx, "match_method"] = "ai_search"
     results.at[idx, "ai_confidence"] = round(ai_result.get("confidence", 0), 2)
+    _set_internal_matched_price(results, idx, rec.get("price", ""))
 
 
 def _trace_skip_all_verify(results, trace, reason):
@@ -485,7 +519,11 @@ def _build_review_items(to_review):
         # Mark items where first AI had API failure (confidence=0 from fallback)
         is_api_failed = first_confidence == 0.0
         first_reason = "API unavailable - no first AI decision was made" if is_api_failed else ""
-        items.append((drug_a, drug_b or "", drug_b_ar or "", first_decision, first_confidence, first_reason, idx, is_api_failed))
+        items.append((
+            drug_a, drug_b or "", drug_b_ar or "", first_decision,
+            first_confidence, first_reason, idx, is_api_failed,
+            row.get("_drug_price", ""), row.get("_matched_price", ""),
+        ))
     return items
 
 
@@ -604,7 +642,12 @@ async def _apply_review_results(
                     )[0]
                 ]
                 if valid:
-                    ai_result = await verifier.find_better_match(drug_name, valid)
+                    ai_result = await verifier.find_better_match(
+                        drug_name, valid,
+                        inventory_price=_internal_value(
+                            results, idx, "_drug_price",
+                        ),
+                    )
                     if ai_result and ai_result.get("record"):
                         _apply_correction(results, idx, ai_result)
                         results.at[idx, "verified"] = "ai_review_corrected"

@@ -166,6 +166,7 @@ class MatchPipeline:
     def _make_row(self, row, rec, score, method, stats):
         code = str(row.code)
         drug_name = str(row.drug_name)
+        drug_price = getattr(row, "drug_price", "")
         if rec is not None:
             key = "brand_index" if "brand" in method else "fuzzy"
             stats[key] += 1
@@ -179,6 +180,8 @@ class MatchPipeline:
                 "match_method": method,
                 "ai_confidence": "",
                 "ai_review_confidence": "",
+                "_drug_price": drug_price,
+                "_matched_price": rec.get("price", ""),
             }
         stats["no_match"] += 1
         return {
@@ -190,6 +193,8 @@ class MatchPipeline:
             "match_method": method,
             "ai_confidence": "",
             "ai_review_confidence": "",
+            "_drug_price": drug_price,
+            "_matched_price": "",
         }
 
     def _log_match_counts(self):
@@ -316,7 +321,9 @@ class MatchPipeline:
         if self._results is None:
             raise RuntimeError("No results to save")
         path = output_path or str(Paths().output_csv)
-        self._results.to_csv(path, index=False, encoding="utf-8-sig")
+        self._public_results(self._results).to_csv(
+            path, index=False, encoding="utf-8-sig",
+        )
         logger.info(f"Saved to {path}")
         self.save_progress()
         if self._trace and self._trace.enabled:
@@ -333,9 +340,14 @@ class MatchPipeline:
         review["manual_decision"] = ""
         review["manual_reason"] = ""
         review["correct_store_product_id"] = ""
-        review.to_csv(path, index=False, encoding="utf-8-sig")
+        self._public_results(review).to_csv(path, index=False, encoding="utf-8-sig")
         logger.info(f"Manual review CSV saved to {path}")
         return path
+
+    @staticmethod
+    def _public_results(results: pd.DataFrame) -> pd.DataFrame:
+        """Drop internal helper columns before writing public CSV files."""
+        return results.loc[:, [c for c in results.columns if not c.startswith("_")]]
 
     def _manual_review_rows(self):
         has_match = (

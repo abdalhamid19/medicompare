@@ -9,6 +9,7 @@ import aiohttp
 
 from .config import APIConfig
 from .normalizer import parse_drug
+from .pricing import format_price, price_context, price_delta_text
 from .prompts import (
     FRESH_REVIEW_PROMPT,
     REVIEW_PROMPT,
@@ -119,10 +120,16 @@ def _component_context(name: str) -> str:
     )
 
 
-def _format_candidate(position: int, candidate: tuple[dict, float, int]) -> str:
+def _format_candidate(
+    position: int, candidate: tuple[dict, float, int],
+    inventory_price=None,
+) -> str:
     rec, score, _ = candidate
-    price = rec.get("price")
-    price_text = f", price={price}" if price not in (None, "") else ""
+    candidate_price = rec.get("price")
+    price_text = (
+        f", candidate_price={format_price(candidate_price)}, "
+        f"price_delta={price_delta_text(inventory_price, candidate_price)}"
+    )
     return (
         f"{position}. {rec['product_name_en']} / "
         f"{rec.get('product_name_ar', '')} "
@@ -131,16 +138,33 @@ def _format_candidate(position: int, candidate: tuple[dict, float, int]) -> str:
     )
 
 
-def _normalize_verify_item(item: tuple) -> tuple[str, str, str, int, str, str]:
+def _normalize_verify_item(
+    item: tuple,
+) -> tuple[str, str, str, int, str, str, object, object]:
     """Support old verify items plus optional score/method context."""
     if len(item) == 3:
         drug_a, drug_b, row_idx = item
-        return drug_a, drug_b, "", row_idx, "", ""
+        return drug_a, drug_b, "", row_idx, "", "", None, None
     if len(item) == 4:
         drug_a, drug_b, drug_b_ar, row_idx = item
-        return drug_a, drug_b, drug_b_ar, row_idx, "", ""
-    drug_a, drug_b, drug_b_ar, row_idx, score, method = item
-    return drug_a, drug_b, drug_b_ar, row_idx, score, method
+        return drug_a, drug_b, drug_b_ar, row_idx, "", "", None, None
+    if len(item) == 6:
+        drug_a, drug_b, drug_b_ar, row_idx, score, method = item
+        return drug_a, drug_b, drug_b_ar, row_idx, score, method, None, None
+    drug_a, drug_b, drug_b_ar, row_idx = item[:4]
+    score, method = item[4], item[5]
+    inventory_price, candidate_price = item[6], item[7]
+    return (
+        drug_a, drug_b, drug_b_ar, row_idx, score, method,
+        inventory_price, candidate_price,
+    )
+
+
+def _normalize_review_item(item: tuple) -> tuple:
+    """Support review items with optional inventory/candidate prices."""
+    if len(item) == 8:
+        return (*item, None, None)
+    return item
 
 
 class AIVerifier:
@@ -291,7 +315,8 @@ class AIVerifier:
 
     async def verify_one(
         self, drug_a: str, drug_b: str, drug_b_ar: str = "",
-        algo_score="", algo_method="",
+        algo_score="", algo_method="", inventory_price=None,
+        candidate_price=None,
     ) -> dict[str, Any]:
         """Verify a single match. Returns {is_correct, reason, confidence}."""
         if not self._cfg.api_key:
@@ -309,6 +334,7 @@ class AIVerifier:
             drug_a_context=_component_context(drug_a),
             drug_b_context=_component_context(drug_b),
             algorithm_context=algorithm_context,
+            price_context=price_context(inventory_price, candidate_price),
         )
         payload = {
             "model": self._cfg.model,
@@ -332,8 +358,10 @@ class AIVerifier:
         """Verify a batch of matches. Each item is (drug_a, drug_b, drug_b_ar, row_index)."""
         normalized = [_normalize_verify_item(item) for item in matches]
         tasks = [
-            self.verify_one(a, b, ar, score, method)
-            for a, b, ar, _, score, method in normalized
+            self.verify_one(a, b, ar, score, method, inv_price, cand_price)
+            for (
+                a, b, ar, _, score, method, inv_price, cand_price
+            ) in normalized
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -355,6 +383,7 @@ class AIVerifier:
         self, drug_a: str, drug_b: str,
         first_decision: str, first_confidence: float, first_reason: str,
         api_failed: bool = False, drug_b_ar: str = "",
+        inventory_price=None, candidate_price=None,
     ) -> dict[str, Any]:
         """Ask a second model to review the first AI's decision.
         If api_failed=True, the first AI never made a real decision — ask for fresh verification.
@@ -372,6 +401,7 @@ class AIVerifier:
                 drug_b_ar_line=ar_line,
                 drug_a_context=_component_context(drug_a),
                 drug_b_context=_component_context(drug_b),
+                price_context=price_context(inventory_price, candidate_price),
             )
         else:
             decision_text = (
@@ -386,6 +416,7 @@ class AIVerifier:
                 drug_b_ar_line=ar_line,
                 drug_a_context=_component_context(drug_a),
                 drug_b_context=_component_context(drug_b),
+                price_context=price_context(inventory_price, candidate_price),
                 first_decision_text=decision_text,
                 first_confidence=first_confidence,
                 first_reason=first_reason,
@@ -429,38 +460,51 @@ class AIVerifier:
         }
 
     async def review_batch(
-        self, items: list[tuple[str, str, str, str, float, str, int, bool]]
+        self, items: list[tuple]
     ) -> list[dict[str, Any]]:
-        """Review a batch of first-AI decisions. Each item is (drug_a, drug_b, drug_b_ar, first_decision, first_confidence, first_reason, row_index, api_failed)."""
+        """Review a batch of first-AI decisions."""
+        normalized = [_normalize_review_item(item) for item in items]
         tasks = [
-            self.review_one(a, b, d, c, r, api_failed=f, drug_b_ar=ar)
-            for a, b, ar, d, c, r, _, f in items
+            self.review_one(
+                a, b, d, c, r, api_failed=f, drug_b_ar=ar,
+                inventory_price=inv_price, candidate_price=cand_price,
+            )
+            for (
+                a, b, ar, d, c, r, _, f, inv_price, cand_price
+            ) in normalized
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                out.append({"is_correct": True, "reason": f"review_exception:{r}", "confidence": items[i][4], "row_idx": items[i][6]})
+                out.append({
+                    "is_correct": True,
+                    "reason": f"review_exception:{r}",
+                    "confidence": normalized[i][4],
+                    "row_idx": normalized[i][6],
+                })
             else:
-                r["row_idx"] = items[i][6]
+                r["row_idx"] = normalized[i][6]
                 out.append(r)
         return out
 
     async def find_better_match(
-        self, drug_name: str, candidates: list[tuple[dict, float, int]]
+        self, drug_name: str, candidates: list[tuple[dict, float, int]],
+        inventory_price=None,
     ) -> dict[str, Any] | None:
         """Ask AI to pick the best match from candidates."""
         if not candidates or (not self._cfg.api_keys and not self._cfg.api_key):
             return None
 
         candidates_text = "\n".join(
-            _format_candidate(i + 1, c)
+            _format_candidate(i + 1, c, inventory_price)
             for i, c in enumerate(candidates[:5])
         )
         prompt = render_prompt(
             SEARCH_PROMPT,
             drug_name=drug_name,
             inventory_context=_component_context(drug_name),
+            inventory_price=format_price(inventory_price),
             candidates_text=candidates_text,
             max_index=min(len(candidates), 5),
         )

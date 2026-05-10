@@ -32,6 +32,7 @@ def _make_results(rows):
         "code", "drug_name", "matched_product_name_en",
         "matched_product_name_ar", "matched_store_product_id",
         "match_score", "verified", "match_method",
+        "_drug_price", "_matched_price",
     ]
     return pd.DataFrame(rows, columns=cols)
 
@@ -139,6 +140,25 @@ class TestBuildVerifyItems(unittest.TestCase):
         self.assertEqual(items[0][3], 0)
         self.assertEqual(items[0][4], 85.0)
         self.assertEqual(items[0][5], "brand_index")
+
+    def test_builds_items_with_price_context(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA",
+                "matched_product_name_en": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_ar": "بانادول اكسترا",
+                "matched_store_product_id": "T-2",
+                "match_score": 85.0, "verified": "algo_match",
+                "match_method": "brand_index",
+                "_drug_price": "34",
+                "_matched_price": 34.0,
+            },
+        ])
+
+        items = _build_verify_items(results)
+
+        self.assertEqual(items[0][6], "34")
+        self.assertEqual(items[0][7], 34.0)
 
 
 class TestGetUnmatched(unittest.TestCase):
@@ -462,6 +482,33 @@ class TestRunAiSearchWithMock(unittest.TestCase):
             "PANADOL EXTRA 24 TAB",
         )
 
+    def test_passes_inventory_price_to_ai_search(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+                "_drug_price": "40",
+            },
+        ])
+        index = _make_index()
+        cfg = MatchingConfig(fuzzy_threshold=70)
+        api_cfg = APIConfig(api_key="test-key")
+
+        mock_verifier = AsyncMock()
+        mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
+        mock_verifier.__aexit__ = AsyncMock(return_value=None)
+        mock_verifier.find_better_match = AsyncMock(return_value=None)
+
+        with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
+            asyncio.run(run_ai_search(results, index, cfg, api_cfg))
+
+        call = mock_verifier.find_better_match.call_args
+        self.assertEqual(call.kwargs["inventory_price"], "40")
+
     def test_no_candidates_skips_ai(self):
         results = _make_results([
             {
@@ -639,8 +686,8 @@ class TestBatchReview(unittest.TestCase):
             {"is_correct": False, "row_idx": 11},
         ])
         items = [
-            ("A", "B", "", "ai_rejected", 0.5, "", 10, False),
-            ("C", "D", "", "ai_confirmed", 0.0, "", 11, True),
+            ("A", "B", "", "ai_rejected", 0.5, "", 10, False, "10", "11"),
+            ("C", "D", "", "ai_confirmed", 0.0, "", 11, True, "20", "20"),
         ]
 
         out = asyncio.run(_batch_review(verifier, items, MatchingConfig()))
