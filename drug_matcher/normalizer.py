@@ -35,7 +35,8 @@ BRAND_QUALIFIERS = frozenset({
     "INFINITY", "SURACTIVE", "ALKALINE", "ESOMEPRAZOLE",
     "OPHTALMIC", "HAIR", "GROWTH", "CAFFEINE", "RICH",
     "DS", "DA", "ANTI", "EXTRA", "FORTE", "FORET", "EFFOX", "LONG",
-    "EMOLLIENT", "OPHTIOLE", "ORL", "AMOUN",
+    "EMOLLIENT", "OPHTIOLE", "ORL", "AMOUN", "PAEDIATRIC",
+    "PEDIATRIC", "INFANT", "INFANTS", "INFANTILE", "KID", "KIDS",
 })
 ACRONYM_BRANDS = frozenset({"AIG"})
 FLAVOR_WORDS = frozenset({
@@ -52,6 +53,12 @@ OCULAR_FORMS = frozenset({"OPHTALMIC", "EYE", "DROPS", "SOLUTION"})
 LIQUID_FORMS = frozenset({"SYRUP", "SUSP", "SOLUTION", "ORL"})
 LIQUID_DOSE_FORMS = frozenset({"SYRUP", "SUSP", "SOLUTION", "ORL", "AMP", "VIAL"})
 SOLID_FORMS = frozenset({"TAB", "CAP"})
+PEDIATRIC_WORDS = frozenset({
+    "PAEDIATRIC", "PEDIATRIC", "INFANT", "INFANTS", "INFANTILE", "KID", "KIDS",
+})
+INFUSION_CONTEXT_WORDS = frozenset({
+    "I", "V", "IV", "I/V", "INJ", "INJECTION", "INFUSION", "VIAL", "AMP", "AMPS",
+})
 FORM_SCAN_ORDER = (
     "VIAL", "VIALS", "AMP", "AMPS", "SPRAY", "SPRAYS", "SYRUP", "SYRP",
     "SYP", "SUSP",
@@ -179,25 +186,27 @@ def parse_drug(name: str) -> DrugComponents:
         brand = ""
     brand_words: list[str] = []
     if not brand:
-        for w in words:
+        for idx, w in enumerate(words):
             if re.search(r"\d", w):
                 break
             if (
                 w in FORM_PREFIXES or w in FORM_WORDS
                 or w in NOISE_WORDS or w in BRAND_QUALIFIERS
+                or _is_pediatric_inf(words, idx)
             ):
                 break
             brand_words.append(w)
         brand = "".join(brand_words)
     if not brand and words and words[0] in BRAND_QUALIFIERS:
         brand = "".join(
-            w for w in words[1:]
+            w for idx, w in enumerate(words[1:], start=1)
             if (
                 not re.search(r"\d", w)
                 and w not in FORM_PREFIXES
                 and w not in FORM_WORDS
                 and w not in NOISE_WORDS
                 and w not in BRAND_QUALIFIERS
+                and not _is_pediatric_inf(words, idx)
             )
         )
     if brand == "ATOMOXAPEX" and dosage_nums == ("40",) and volume == "100":
@@ -266,6 +275,20 @@ def _modifier_is_optional(modifier: str, d_words: set[str], m_words: set[str]):
     return False
 
 
+def _is_pediatric_inf(words: list[str], idx: int) -> bool:
+    if words[idx] != "INF" or idx == 0:
+        return False
+    return not bool(set(words) & INFUSION_CONTEXT_WORDS)
+
+
+def _has_pediatric_signal(words: set[str]) -> bool:
+    if words & PEDIATRIC_WORDS:
+        return True
+    if "INF" not in words:
+        return False
+    return not bool(words & INFUSION_CONTEXT_WORDS)
+
+
 def _forms_compatible(left: str, right: str) -> bool:
     if not left or not right or left == right:
         return True
@@ -313,6 +336,8 @@ def components_match(
             if _modifier_is_optional(modifier, d_words, m_words):
                 continue
             return False, "different_modifier"
+    if _has_pediatric_signal(d_words) and not _has_pediatric_signal(m_words):
+        return False, "different_age_group"
 
     if d_clean and m_clean:
         shorter = min(len(d_clean), len(m_clean))

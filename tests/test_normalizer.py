@@ -73,6 +73,8 @@ class NormalizerTests(unittest.TestCase):
             ("ALOEKITA CAFFEINE RICH DS DA SHAMPOO 250 ML", "ALOEKITA"),
             ("ALKA MISR ALKALINE WASH POWDER 12 SACHETS", "ALKAMISR"),
             ("AMIKACIN AMOUN 500 MG / 2 ML VIAL", "AMIKACIN"),
+            ("ASPOCID INF 30TAB", "ASPOCID"),
+            ("ASPOCID PAEDIATRIC 75 MG 30 CHEWABLE TAB", "ASPOCID"),
             ("aig esomeprprazole 40ml 28capsules", "AIG"),
         ]
         for raw, expected in cases:
@@ -88,6 +90,7 @@ class NormalizerTests(unittest.TestCase):
             ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN 30 CAPS", "different_modifier"),
             ("CALCIUM D3 30 TAB", "CALCIUM 30 TAB", "different_modifier"),
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB", "different_import_status"),
+            ("ASPOCID INF 30TAB", "ASPOCID 75 MG 30 TAB", "different_age_group"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):
@@ -103,6 +106,7 @@ class NormalizerTests(unittest.TestCase):
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB IMP"),
             ("ALLERBAN SYRUP 120ML", "ALLERBAN 1 MG / 5 ML SYRUP 100 ML"),
             ("AMIKACIN 500MG VIAL", "AMIKACIN AMOUN 500 MG / 2 ML VIAL"),
+            ("ASPOCID INF 30TAB", "ASPOCID PAEDIATRIC 75 MG 30 CHEWABLE TAB"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

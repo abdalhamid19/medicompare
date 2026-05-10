@@ -186,6 +186,16 @@ def make_reported_errors_index(threshold: int = 70) -> DrugIndex:
                 "product_name_en": "AVAMYS NASAL SPRAY 120 DOSES",
                 "store_product_id": "2537745",
             },
+            {
+                "product_name_ar": "اسبوسيد عادي",
+                "product_name_en": "ASPOCID 75 MG 30 TAB",
+                "store_product_id": "1857090",
+            },
+            {
+                "product_name_ar": "اسبوسيد اطفال",
+                "product_name_en": "ASPOCID PAEDIATRIC 75 MG 30 CHEWABLE TAB",
+                "store_product_id": "2145465",
+            },
         ]
     )
     cfg = MatchingConfig(fuzzy_threshold=threshold, top_k_candidates=10)
@@ -307,6 +317,7 @@ class DrugIndexTests(unittest.TestCase):
             ("ATOREZA 10MG/20MG 21 TAB", "2601810"),
             ("AUGMENTIN DUO 228 /5 MG SUSP 70 ML", "2369290"),
             ("AVAMYS 120 SPRAYS", "2537745"),
+            ("ASPOCID INF 30TAB", "2145465"),
         ]
         for query, expected_id in cases:
             with self.subTest(query=query):
