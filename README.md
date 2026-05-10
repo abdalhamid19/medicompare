@@ -26,11 +26,10 @@ pip install -r requirements.txt
 
 **متغيرات البيئة** (ملف `.env` في جذر المشروع):
 ```
-AGENT_ROUTER_API_KEY=your-key
-AGENT_ROUTER_BASE_URL=https://opencode.ai/zen/v1
-AGENT_ROUTER_MODEL=minimax-m2.5-free
+AI_MODEL=minimax-m2.5-free
 OPENCODE_API_KEY=your-opencode-key
 OPENROUTER_API_KEY=your-openrouter-key
+GROQ_API_KEY=your-groq-key
 REVIEW_MODEL=big-pickle
 AI_REVIEW_THRESHOLD=1.0
 ```
@@ -125,7 +124,7 @@ python run_tests.py
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 | `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 | `--no-ai` | تخطي AI (مطابقة خوارزمية فقط بدون تحقق أو بحث) | معطل |
-| `--provider` | مزود API: `rotation`, `groq`, `opencode`, `openrouter`, `agentrouter`, `custom` | من .env |
+| `--provider` | مزود API: `rotation`, `groq`, `opencode`, `openrouter`, `custom` | من .env |
 | `--model` | نموذج AI (مثل `big-pickle`, `openai/gpt-4o-mini`) | من .env |
 | `--api-key` | مفتاح API (يتجاوز .env) | من .env |
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
@@ -134,7 +133,7 @@ python run_tests.py
 
 ### تشغيل AI آمن وسريع
 
-عند تشغيل `run_matcher.py` مع AI، يقوم البرنامج تلقائيًا بعمل preflight سريع للمفاتيح والموديلات المتاحة. إذا فشل موديل محدد في نفس وقت التشغيل، لا يعتمد عليه البرنامج حتى لو كان مكتوبًا في `.env`، ويستخدم أول combo صالح من نفس قائمة `AGENT_ROUTER_MODEL` و`FALLBACK_MODELS` و`REVIEW_MODEL`.
+عند تشغيل `run_matcher.py` مع AI، يقوم البرنامج تلقائيًا بعمل preflight سريع للمفاتيح والموديلات المتاحة. إذا فشل موديل محدد في نفس وقت التشغيل، لا يعتمد عليه البرنامج حتى لو كان مكتوبًا في `.env`، ويستخدم أول combo صالح من نفس قائمة `AI_MODEL` و`FALLBACK_MODELS` و`REVIEW_MODEL`.
 
 إذا لم يجد preflight أي model/key صالح، يكمل البرنامج تلقائيًا بدون AI بدل أن يتوقف، ويظهر السبب في `trace` عند تفعيل `--trace`.
 
@@ -275,7 +274,6 @@ pytest tests/test_indexer.py  # اختبار واحد
 | Groq | `groq` | `api.groq.com/openai/v1` | `openai/gpt-oss-120b` |
 | Rotation | `rotation` | يختار تلقائيًا | أفضل attempt صالح |
 | OpenRouter | `openrouter` | `openrouter.ai/api/v1` | `openai/gpt-4o-mini` |
-| AgentRouter | `agentrouter` | `agentrouter.org/v1` | `glm-5.1` |
 | مخصص | `custom` | من .env | من .env |
 
 ### أفضل النماذج المجانية (نتائج Benchmark)

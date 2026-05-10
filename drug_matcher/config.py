@@ -41,12 +41,6 @@ PROVIDERS = {
         "env_keys": ["OPENCODE_API_KEY_1", "OPENCODE_API_KEY_2", "OPENCODE_API_KEY"],
         "default_model": "big-pickle",
     },
-    "agentrouter": {
-        "base_url": "https://agentrouter.org/v1",
-        "env_key": "AGENT_ROUTER_API_KEY",
-        "env_keys": ["AGENT_ROUTER_API_KEY"],
-        "default_model": "glm-5.1",
-    },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "env_key": "GROQ_API_KEY",
@@ -61,8 +55,8 @@ PROVIDERS = {
     },
     "custom": {
         "base_url": "",
-        "env_key": "AGENT_ROUTER_API_KEY",
-        "env_keys": ["AGENT_ROUTER_API_KEY"],
+        "env_key": "CUSTOM_API_KEY",
+        "env_keys": ["CUSTOM_API_KEY"],
         "default_model": "",
     },
 }
@@ -76,32 +70,34 @@ def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -
     # If provider specified, use its defaults
     if provider and provider in PROVIDERS:
         p = PROVIDERS[provider]
-        key = api_key or os.getenv(p["env_key"], "") or os.getenv("AGENT_ROUTER_API_KEY", "")
+        key = api_key or os.getenv(p["env_key"], "")
         # Collect all keys for this provider
         all_keys = tuple(
             k for k in (
                 api_key,
                 *(os.getenv(ek, "") for ek in p.get("env_keys", [p["env_key"]])),
-                os.getenv("AGENT_ROUTER_API_KEY", ""),
             ) if k
         )
         # Deduplicate while preserving order
         seen = set()
         unique_keys = tuple(k for k in all_keys if k not in seen and not seen.add(k))
         url = p["base_url"]
-        mdl = model or os.getenv("AGENT_ROUTER_MODEL", "") or p["default_model"]
+        mdl = model or os.getenv("AI_MODEL", "") or p["default_model"]
         return {"api_key": key, "api_keys": unique_keys, "base_url": url, "model": mdl, "fallback_models": fallback_models}
     # No provider: use env vars or .env
-    key = api_key or os.getenv("AGENT_ROUTER_API_KEY", "")
-    url = os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-    mdl = model or os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini")
+    key = api_key or os.getenv("OPENROUTER_API_KEY", "")
+    url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+    mdl = model or os.getenv("AI_MODEL", "openai/gpt-4o-mini")
     all_keys = tuple(
         k for k in (
             api_key,
             os.getenv("OPENCODE_API_KEY_1", ""),
             os.getenv("OPENCODE_API_KEY_2", ""),
             os.getenv("OPENCODE_API_KEY", ""),
-            os.getenv("AGENT_ROUTER_API_KEY", ""),
+            os.getenv("GROQ_API_KEY_1", ""),
+            os.getenv("GROQ_API_KEY", ""),
+            os.getenv("OPENROUTER_API_KEY", ""),
+            os.getenv("CUSTOM_API_KEY", ""),
         ) if k
     )
     seen = set()
@@ -111,17 +107,20 @@ def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -
 
 @dataclass(frozen=True)
 class APIConfig:
-    api_key: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_API_KEY", ""))
+    api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     api_keys: tuple = field(default_factory=lambda: tuple(
         k for k in (
             os.getenv("OPENCODE_API_KEY_1", ""),
             os.getenv("OPENCODE_API_KEY_2", ""),
             os.getenv("OPENCODE_API_KEY", ""),
-            os.getenv("AGENT_ROUTER_API_KEY", ""),
+            os.getenv("GROQ_API_KEY_1", ""),
+            os.getenv("GROQ_API_KEY", ""),
+            os.getenv("OPENROUTER_API_KEY", ""),
+            os.getenv("CUSTOM_API_KEY", ""),
         ) if k
     ))
-    base_url: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
-    model: str = field(default_factory=lambda: os.getenv("AGENT_ROUTER_MODEL", "openai/gpt-4o-mini"))
+    base_url: str = field(default_factory=lambda: os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
+    model: str = field(default_factory=lambda: os.getenv("AI_MODEL", "openai/gpt-4o-mini"))
     fallback_models: tuple = field(default_factory=lambda: tuple(
         m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()
     ))

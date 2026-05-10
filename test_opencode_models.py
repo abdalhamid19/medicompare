@@ -38,7 +38,7 @@ def configured_keys() -> list[AIKey]:
 
 def configured_models() -> list[str]:
     return dedupe(
-        [_env("AGENT_ROUTER_MODEL")]
+        [_env("AI_MODEL")]
         + split_csv(_env("FALLBACK_MODELS"))
         + [_env("REVIEW_MODEL")]
     )
@@ -97,7 +97,7 @@ async def run(args) -> int:
         print("No OpenCode keys found in .env or environment.")
         return 2
     if not models:
-        print("No models found. Set AGENT_ROUTER_MODEL/FALLBACK_MODELS/REVIEW_MODEL.")
+        print("No models found. Set AI_MODEL/FALLBACK_MODELS/REVIEW_MODEL.")
         return 2
 
     print(f"Testing {len(keys)} key(s), {len(models)} model(s), modes={modes}")
@@ -123,7 +123,7 @@ def parse_args():
     )
     parser.add_argument(
         "--models", nargs="+", default=None,
-        help="Models to test. Default: AGENT_ROUTER_MODEL + FALLBACK_MODELS + REVIEW_MODEL.",
+        help="Models to test. Default: AI_MODEL + FALLBACK_MODELS + REVIEW_MODEL.",
     )
     parser.add_argument(
         "--mode", choices=["json", "plain", "both"], default="json",

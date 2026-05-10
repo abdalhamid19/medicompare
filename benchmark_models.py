@@ -285,7 +285,7 @@ async def main():
     parser.add_argument("--preset", default=None, choices=list(MODEL_PRESETS.keys()),
                         help="Model preset to test (openrouter-free, openrouter-paid, openrouter-all, opencode)")
     parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()),
-                        help="API provider (openrouter, opencode, agentrouter, custom)")
+                        help="API provider (rotation, groq, opencode, openrouter, custom)")
     parser.add_argument("--output", default="docs/MODEL_BENCHMARK.md", help="Output report path")
     parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
     parser.add_argument("--base-url", default=None, help="Base URL (overrides provider default)")
@@ -304,7 +304,7 @@ async def main():
     base_url = args.base_url or resolved["base_url"]
 
     if not api_key:
-        print("❌ No API key found. Set AGENT_ROUTER_API_KEY in .env or use --api-key")
+        print("❌ No API key found. Set provider API key in .env or use --api-key")
         return
 
     # Resolve model list

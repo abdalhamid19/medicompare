@@ -430,8 +430,8 @@
 
 ```bash
 # Set in .env file:
-echo 'AGENT_ROUTER_MODEL=openai/gpt-4o-mini' >> .env
+echo 'AI_MODEL=openai/gpt-4o-mini' >> .env
 
 # Or via environment variable:
-AGENT_ROUTER_MODEL=deepseek/deepseek-chat-v3.1 python run_ai_verify.py --limit 50
+AI_MODEL=deepseek/deepseek-chat-v3.1 python run_ai_verify.py --limit 50
 ```

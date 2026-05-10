@@ -21,7 +21,7 @@ def parse_args():
     parser.add_argument("--output", default=None, help="Output CSV path")
     parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
     parser.add_argument("--model", default=None, help="AI model to use (e.g. openai/gpt-4o-mini, big-pickle)")
-    parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()), help="API provider (openrouter, opencode, agentrouter, custom)")
+    parser.add_argument("--provider", default=None, choices=list(PROVIDERS.keys()), help="API provider (groq, opencode, openrouter, custom)")
     parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
     parser.add_argument("--review-model", default=None, help="Second AI model for cross-review (e.g. big-pickle)")
     parser.add_argument("--review-threshold", type=float, default=None, help="Review AI decisions with confidence below this (default: 1.0)")

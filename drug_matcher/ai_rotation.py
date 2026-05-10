@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from .ai_health import dedupe, mask_key, split_csv
 from .config import PROVIDERS
 
-PROVIDER_ORDER = ("groq", "opencode", "openrouter", "agentrouter")
+PROVIDER_ORDER = ("groq", "opencode", "openrouter")
 
 DEFAULT_MODELS = {
     "groq": (
