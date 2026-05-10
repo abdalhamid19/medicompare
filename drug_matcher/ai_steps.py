@@ -43,6 +43,7 @@ async def run_ai_verification(
                 score, cfg.ai_verify_threshold,
                 row["matched_product_name_en"],
                 parsed.brand, row["match_method"],
+                ai_model=api_cfg.model,
             )
     items = _build_verify_items(to_verify)
     async with AIVerifier(
@@ -84,11 +85,16 @@ async def run_ai_review(
     if trace and trace.enabled:
         for idx, row in to_review.iterrows():
             parsed = parse_drug(row["drug_name"])
+            conf = pd.to_numeric(row.get("ai_confidence", 0), errors="coerce")
+            is_api_failed = (conf == 0.0)
             trace.log_ai_review_sent(
                 row["code"], row["drug_name"],
                 parsed.normalized, parsed.brand,
                 row["verified"], row["ai_confidence"],
                 row["matched_product_name_en"],
+                first_model=api_cfg.model,
+                review_model=api_cfg.review_model,
+                api_failed=is_api_failed,
             )
     items = _build_review_items(to_review)
     async with AIVerifier(
@@ -150,7 +156,7 @@ def _select_for_verification(results, cfg):
 
 def _build_verify_items(to_verify):
     return [
-        (row["drug_name"], row["matched_product_name_en"], idx)
+        (row["drug_name"], row["matched_product_name_en"], row.get("matched_product_name_ar", ""), idx)
         for idx, row in to_verify.iterrows()
     ]
 
@@ -200,6 +206,8 @@ async def _apply_verification(
                     results.at[idx, "matched_product_name_en"],
                     vr.get("confidence"), ai_reason,
                     "",
+                    model_used=vr.get("model_used", ""),
+                    api_failures=verifier.get_fallback_log(),
                 )
     return rejected, corrected
 
@@ -232,6 +240,8 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
                     ai_result.get("confidence"),
                     ai_result.get("reason", ""),
                     rec["product_name_en"],
+                    model_used=ai_result.get("model_used", ""),
+                    api_failures=verifier.get_fallback_log(),
                 )
             return 1, 0
     _clear_match(results, idx)
@@ -247,6 +257,8 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
             results.at[idx, "matched_product_name_en"],
             vr.get("confidence"), vr.get("reason", ""),
             "",
+            model_used=vr.get("model_used", ""),
+            api_failures=verifier.get_fallback_log(),
         )
     return 0, 1
 
@@ -318,6 +330,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
         trace.log_ai_search_sent(
             code, drug_name, norm, parsed.brand,
             len(candidates), cand_names,
+            ai_model=verifier._cfg.model,
         )
     ai_result = await verifier.find_better_match(drug_name, candidates)
     confidence = ai_result.get("confidence", 0) if ai_result else 0
@@ -328,12 +341,16 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             trace.log_ai_search_result(
                 code, drug_name, norm, parsed.brand,
                 True, match_name, confidence,
+                model_used=ai_result.get("model_used", ""),
+                api_failures=verifier.get_fallback_log(),
             )
         return 1
     if trace and trace.enabled:
         trace.log_ai_search_result(
             code, drug_name, norm, parsed.brand,
             False, None, confidence,
+            model_used=ai_result.get("model_used", "") if ai_result else "",
+            api_failures=verifier.get_fallback_log(),
         )
     return 0
 
@@ -443,6 +460,7 @@ def _build_review_items(to_review):
     for idx, row in to_review.iterrows():
         drug_a = row["drug_name"]
         drug_b = row.get("matched_product_name_en", "")
+        drug_b_ar = row.get("matched_product_name_ar", "")
         first_decision = row.get("verified", "")
         first_confidence = pd.to_numeric(row.get("ai_confidence", 0), errors="coerce")
         if pd.isna(first_confidence):
@@ -450,7 +468,7 @@ def _build_review_items(to_review):
         # Mark items where first AI had API failure (confidence=0 from fallback)
         is_api_failed = first_confidence == 0.0
         first_reason = "API unavailable - no first AI decision was made" if is_api_failed else ""
-        items.append((drug_a, drug_b or "", first_decision, first_confidence, first_reason, idx, is_api_failed))
+        items.append((drug_a, drug_b or "", drug_b_ar or "", first_decision, first_confidence, first_reason, idx, is_api_failed))
     return items
 
 
@@ -501,6 +519,8 @@ async def _apply_review_results(
                         parsed.normalized, parsed.brand,
                         True, review_confidence, review_reason,
                         "ai_confirmed (fresh verify by review model)",
+                        review_model=verifier._cfg.review_model,
+                        api_failures=verifier.get_fallback_log(),
                     )
             else:
                 # Second model says this is NOT a correct match
@@ -515,6 +535,8 @@ async def _apply_review_results(
                         parsed.normalized, parsed.brand,
                         False, review_confidence, review_reason,
                         "ai_review_rejected (fresh verify by review model)",
+                        review_model=verifier._cfg.review_model,
+                        api_failures=verifier.get_fallback_log(),
                     )
         elif is_correct:
             # Second model agrees with first AI
@@ -526,6 +548,8 @@ async def _apply_review_results(
                     parsed.normalized, parsed.brand,
                     True, review_confidence, review_reason,
                     f"{first_decision}_reviewed",
+                    review_model=verifier._cfg.review_model,
+                    api_failures=verifier.get_fallback_log(),
                 )
         else:
             # Second model disagrees with first AI
@@ -566,6 +590,8 @@ async def _apply_review_results(
                     parsed.normalized, parsed.brand,
                     False, review_confidence, review_reason,
                     results.at[idx, "verified"],
+                    review_model=verifier._cfg.review_model,
+                    api_failures=verifier.get_fallback_log(),
                 )
     return overridden
 

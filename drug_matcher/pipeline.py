@@ -25,7 +25,7 @@ class MatchPipeline:
 
     __slots__ = (
         "_cfg", "_api_cfg", "_drugs_df", "_index",
-        "_results", "_limit", "_trace",
+        "_results", "_limit", "_start", "_end", "_trace",
     )
 
     def __init__(
@@ -33,11 +33,15 @@ class MatchPipeline:
         cfg: MatchingConfig | None = None,
         api_cfg: APIConfig | None = None,
         limit: int | None = None,
+        start: int | None = None,
+        end: int | None = None,
     ):
         load_env()
         self._cfg = cfg or MatchingConfig()
         self._api_cfg = api_cfg or APIConfig()
         self._limit = limit
+        self._start = start
+        self._end = end
         self._drugs_df: pd.DataFrame | None = None
         self._index: DrugIndex | None = None
         self._results: pd.DataFrame | None = None
@@ -65,6 +69,12 @@ class MatchPipeline:
         if self._limit:
             drugs = drugs.head(self._limit)
             logger.info(f"Limit applied: processing {len(drugs)} drugs")
+        # Apply start/end slice (0-indexed, end is exclusive)
+        if self._start is not None or self._end is not None:
+            s = self._start or 0
+            e = self._end or len(drugs)
+            drugs = drugs.iloc[s:e].reset_index(drop=True)
+            logger.info(f"Slice applied: rows {s}-{e-1} ({len(drugs)} drugs)")
         self._drugs_df = drugs
         self._index = DrugIndex(tawreed, self._cfg)
         logger.info(
@@ -263,6 +273,39 @@ class MatchPipeline:
 
     # --- save & stats ---
 
+    _PROGRESS_FILE = "output/.progress"
+
+    def save_progress(self):
+        """Save current progress (last completed row index) for --resume."""
+        import json
+        from pathlib import Path
+        if self._drugs_df is None:
+            return
+        total = len(self._drugs_df)
+        start = self._start or 0
+        end = self._end or (start + total)
+        progress = {
+            "last_end": end,
+            "total_loaded": total,
+            "start": start,
+        }
+        Path(self._PROGRESS_FILE).parent.mkdir(parents=True, exist_ok=True)
+        Path(self._PROGRESS_FILE).write_text(json.dumps(progress))
+        logger.debug(f"Progress saved: last_end={end}")
+
+    @staticmethod
+    def load_progress() -> dict | None:
+        """Load progress from previous run for --resume."""
+        import json
+        from pathlib import Path
+        p = Path(MatchPipeline._PROGRESS_FILE)
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text())
+        except (json.JSONDecodeError, OSError):
+            return None
+
     def save(self, output_path: str | None = None) -> str:
         """Save results to CSV."""
         if self._results is None:
@@ -270,6 +313,7 @@ class MatchPipeline:
         path = output_path or str(Paths().output_csv)
         self._results.to_csv(path, index=False, encoding="utf-8-sig")
         logger.info(f"Saved to {path}")
+        self.save_progress()
         if self._trace and self._trace.enabled:
             self._trace.save()
         return path

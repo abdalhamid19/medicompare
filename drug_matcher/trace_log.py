@@ -13,6 +13,7 @@ _TRACE_CSV_COLS = [
     "score", "scorer", "threshold",
     "component_ok", "component_reason",
     "ai_phase", "ai_result", "ai_confidence",
+    "ai_model", "ai_review_model", "api_failures",
     "selection_reason",
     "final_match", "final_score", "final_method",
 ]
@@ -44,6 +45,7 @@ class MatchTraceLog:
             "scorer": "", "threshold": "",
             "component_ok": "", "component_reason": "",
             "ai_phase": "", "ai_result": "", "ai_confidence": "",
+            "ai_model": "", "ai_review_model": "", "api_failures": "",
             "selection_reason": "",
             "final_match": "", "final_score": "",
             "final_method": "",
@@ -162,6 +164,7 @@ class MatchTraceLog:
     def log_ai_verify_sent(
         self, code, name, norm, brand, score, threshold,
         matched_name, matched_brand, method,
+        ai_model="",
     ):
         if not self._enabled:
             return
@@ -173,11 +176,12 @@ class MatchTraceLog:
         row["candidate_name"] = matched_name or ""
         row["candidate_brand"] = matched_brand or ""
         row["scorer"] = method
+        row["ai_model"] = ai_model
         row["selection_reason"] = (
             f"algo matched '{matched_name}' "
             f"(brand={matched_brand}) "
             f"score={round(score, 1)} < ai_threshold={threshold}"
-            f" -> sent to AI to verify correctness"
+            f" -> sent to AI model={ai_model} to verify correctness"
         )
         self._rows.append(row)
 
@@ -186,6 +190,7 @@ class MatchTraceLog:
         is_correct, ai_action, detail,
         matched_name, confidence, ai_reason,
         corrected_to,
+        model_used="", api_failures="",
     ):
         if not self._enabled:
             return
@@ -196,12 +201,17 @@ class MatchTraceLog:
         row["ai_confidence"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["candidate_name"] = matched_name or ""
         row["score"] = round(float(confidence), 2) if confidence not in (None, "") else ""
+        row["ai_model"] = model_used
+        row["api_failures"] = api_failures
         row["selection_reason"] = (
             f"AI_says={'correct' if is_correct else 'incorrect'}"
+            f" model={model_used}"
             f" confidence={round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
             f" reason='{ai_reason}'"
             f" action={ai_action}"
         )
+        if api_failures:
+            row["selection_reason"] += f" | API_failures: {api_failures}"
         if corrected_to:
             row["component_reason"] = f"corrected_to={corrected_to}"
         self._rows.append(row)
@@ -209,6 +219,7 @@ class MatchTraceLog:
     def log_ai_search_sent(
         self, code, name, norm, brand,
         n_candidates, candidate_names,
+        ai_model="",
     ):
         if not self._enabled:
             return
@@ -216,15 +227,17 @@ class MatchTraceLog:
         row["step"] = "ai_search_sent"
         row["ai_phase"] = "search"
         row["candidate_name"] = "; ".join(candidate_names[:5])
+        row["ai_model"] = ai_model
         row["selection_reason"] = (
             f"no_match + {n_candidates} candidates found"
-            f" -> sent to AI to pick best match"
+            f" -> sent to AI model={ai_model} to pick best match"
         )
         self._rows.append(row)
 
     def log_ai_search_result(
         self, code, name, norm, brand,
         found, match_name, confidence,
+        model_used="", api_failures="",
     ):
         if not self._enabled:
             return
@@ -235,16 +248,21 @@ class MatchTraceLog:
         row["ai_confidence"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["candidate_name"] = match_name or ""
         row["score"] = round(float(confidence), 2) if confidence not in (None, "") else ""
+        row["ai_model"] = model_used
+        row["api_failures"] = api_failures
         row["selection_reason"] = (
-            f"AI_confidence="
-            f"{round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
+            f"AI_model={model_used}"
+            f" confidence={round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
             f" >= 0.7 -> {'accepted' if found else 'rejected'}"
         )
+        if api_failures:
+            row["selection_reason"] += f" | API_failures: {api_failures}"
         self._rows.append(row)
 
     def log_ai_review_sent(
         self, code, name, norm, brand,
         first_decision, first_confidence, matched_name,
+        first_model="", review_model="", api_failed=False,
     ):
         if not self._enabled:
             return
@@ -254,16 +272,25 @@ class MatchTraceLog:
         row["ai_result"] = first_decision
         row["ai_confidence"] = round(float(first_confidence), 2) if first_confidence not in (None, "") else ""
         row["candidate_name"] = matched_name or ""
-        row["selection_reason"] = (
-            f"first_AI={first_decision}"
-            f" confidence={round(float(first_confidence), 2) if first_confidence not in (None, '') else 'N/A'}"
-            f" < review_threshold -> sent to second model for review"
-        )
+        row["ai_model"] = first_model
+        row["ai_review_model"] = review_model
+        if api_failed:
+            row["selection_reason"] = (
+                f"first_AI=UNAVAILABLE (API failed)"
+                f" -> sent to review model={review_model} for FRESH verification"
+            )
+        else:
+            row["selection_reason"] = (
+                f"first_AI={first_decision} model={first_model}"
+                f" confidence={round(float(first_confidence), 2) if first_confidence not in (None, '') else 'N/A'}"
+                f" < review_threshold -> sent to review model={review_model}"
+            )
         self._rows.append(row)
 
     def log_ai_review_result(
         self, code, name, norm, brand,
         agree, review_confidence, review_reason, final_action,
+        review_model="", api_failures="",
     ):
         if not self._enabled:
             return
@@ -272,12 +299,17 @@ class MatchTraceLog:
         row["ai_phase"] = "review"
         row["ai_result"] = final_action
         row["ai_confidence"] = round(float(review_confidence), 2) if review_confidence not in (None, "") else ""
+        row["ai_review_model"] = review_model
+        row["api_failures"] = api_failures
         row["selection_reason"] = (
             f"second_AI={'agrees' if agree else 'disagrees'}"
+            f" model={review_model}"
             f" confidence={round(float(review_confidence), 2) if review_confidence not in (None, '') else 'N/A'}"
             f" reason='{review_reason}'"
             f" action={final_action}"
         )
+        if api_failures:
+            row["selection_reason"] += f" | API_failures: {api_failures}"
         self._rows.append(row)
 
     def log_ai_skip(self, code, name, norm, brand, phase, reason):
@@ -383,17 +415,22 @@ class MatchTraceLog:
             )
             f.write(f"     reason: {row['selection_reason']}\n\n")
         elif step == "ai_verify_sent":
+            model_txt = f"  model={row['ai_model']}" if row.get('ai_model') else ""
             f.write(
                 f"  [AI VERIFY] sent to verify: "
                 f"'{row['candidate_name']}'"
                 f"  (brand={row['candidate_brand']})"
-                f"  score={row['score']} < threshold={row['threshold']}\n",
+                f"  score={row['score']} < threshold={row['threshold']}"
+                f"{model_txt}\n",
             )
         elif step == "ai_verify_result":
+            model_txt = f"  model={row['ai_model']}" if row.get('ai_model') else ""
+            api_txt = f"  API_FAILURES={row['api_failures']}" if row.get('api_failures') else ""
             f.write(
                 f"  [AI VERIFY] result={row['ai_result']}  "
                 f"verifying='{row['candidate_name']}'  "
-                f"confidence={row['score']}\n",
+                f"confidence={row['score']}"
+                f"{model_txt}{api_txt}\n",
             )
             f.write(
                 f"     {row['selection_reason']}\n",
@@ -403,38 +440,48 @@ class MatchTraceLog:
                     f"     {row['component_reason']}\n",
                 )
         elif step == "ai_search_sent":
+            model_txt = f"  model={row['ai_model']}" if row.get('ai_model') else ""
             f.write(
-                f"  [AI SEARCH] sent with {row['selection_reason']}\n"
+                f"  [AI SEARCH] sent with {row['selection_reason']}{model_txt}\n"
             )
             if row.get('candidate_name'):
                 f.write(
                     f"     candidates: {row['candidate_name']}\n"
                 )
         elif step == "ai_search_result":
+            model_txt = f"  model={row['ai_model']}" if row.get('ai_model') else ""
+            api_txt = f"  API_FAILURES={row['api_failures']}" if row.get('api_failures') else ""
             if row["ai_result"] == "ai_found":
                 f.write(
                     f"  [AI SEARCH] FOUND: "
                     f"{row['candidate_name']}"
-                    f"  confidence={row['score']}\n",
+                    f"  confidence={row['score']}"
+                    f"{model_txt}{api_txt}\n",
                 )
             else:
                 f.write(
                     f"  [AI SEARCH] not found  "
-                    f"{row['selection_reason']}\n",
+                    f"{row['selection_reason']}{api_txt}\n",
                 )
         elif step == "ai_review_sent":
+            first_model_txt = f"  first_model={row['ai_model']}" if row.get('ai_model') else ""
+            review_model_txt = f"  review_model={row['ai_review_model']}" if row.get('ai_review_model') else ""
             f.write(
                 f"  [AI REVIEW] sent to second model: "
                 f"first_decision={row['ai_result']}  "
-                f"first_confidence={row['ai_confidence']}\n",
+                f"first_confidence={row['ai_confidence']}"
+                f"{first_model_txt}{review_model_txt}\n",
             )
             f.write(
                 f"     {row['selection_reason']}\n",
             )
         elif step == "ai_review_result":
+            review_model_txt = f"  review_model={row['ai_review_model']}" if row.get('ai_review_model') else ""
+            api_txt = f"  API_FAILURES={row['api_failures']}" if row.get('api_failures') else ""
             f.write(
                 f"  [AI REVIEW] result={row['ai_result']}  "
-                f"review_confidence={row['ai_confidence']}\n",
+                f"review_confidence={row['ai_confidence']}"
+                f"{review_model_txt}{api_txt}\n",
             )
             f.write(
                 f"     {row['selection_reason']}\n",

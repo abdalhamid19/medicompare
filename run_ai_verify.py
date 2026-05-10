@@ -1,13 +1,20 @@
 """Run the AI verification phase."""
 import argparse
 import asyncio
+import logging
+
 from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env, resolve_api_config, PROVIDERS
 from drug_matcher.pipeline import MatchPipeline
+
+logger = logging.getLogger("medicompare")
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="MediCompare - AI Verification Pipeline")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of drugs to process")
+    parser.add_argument("--start", type=int, default=None, help="Start index (0-based, inclusive)")
+    parser.add_argument("--end", type=int, default=None, help="End index (0-based, exclusive)")
+    parser.add_argument("--resume", action="store_true", help="Resume from last completed position")
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level")
     parser.add_argument("--threshold", type=int, default=80, help="Fuzzy matching threshold (default: 80)")
     parser.add_argument("--ai-threshold", type=float, default=90.0, help="AI verification threshold (default: 90)")
@@ -33,7 +40,7 @@ async def main():
         ai_batch_size=20,
         ai_max_concurrent=5,
         top_k_candidates=10,
-        ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.8,
+        ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.95,
     )
     resolved = resolve_api_config(
         provider=args.provider or "",
@@ -51,7 +58,18 @@ async def main():
         temperature=0.1,
     )
 
-    pipeline = MatchPipeline(cfg=cfg, api_cfg=api_cfg, limit=args.limit)
+    # Resolve start/end from --resume or explicit args
+    start = args.start
+    end = args.end
+    if args.resume:
+        progress = MatchPipeline.load_progress()
+        if progress:
+            start = progress["last_end"]
+            logger.info(f"Resuming from row {start} (from previous run)")
+        else:
+            logger.info("No progress file found — starting from beginning")
+
+    pipeline = MatchPipeline(cfg=cfg, api_cfg=api_cfg, limit=args.limit, start=start, end=end)
     if args.trace:
         from drug_matcher.trace_log import MatchTraceLog
         pipeline._trace = MatchTraceLog(enabled=True)

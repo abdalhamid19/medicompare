@@ -97,10 +97,11 @@ def parse_drug(name: str) -> DrugComponents:
         brand_words.append(w)
     brand = "".join(brand_words)
 
-    # Form detection
+    # Form detection — use word-boundary check to avoid "OINT" matching inside "JOINT"
     form = ""
+    norm_words = set(norm.split())
     for fw in FORM_PREFIXES:
-        if fw in norm:
+        if fw in norm_words:
             form = fw
             break
 

@@ -17,8 +17,9 @@ STRICT Rules - if ANY of these fail, the match is WRONG:
 1. BRAND NAME must be identical (e.g. "PANADOL" = "PANADOL", but "PANADOL" ≠ "PANADOL EXTRA", "VIGOTON PLUS" ≠ "VIGOTON")
 2. DOSAGE numbers must match exactly (e.g. 0.8% ≠ 0.4%, 25mg = 25mg, 10mg ≠ 20mg)
    EXCEPTION: If Drug A (inventory) does NOT specify a dosage/strength but Drug B does (e.g. "ACHTENON 30 TABS" vs "ACHTENON 2 MG 30 TABS"), this is NOT a mismatch — inventory names are often abbreviated and omit the dosage. Only reject if BOTH specify a dosage AND they differ.
-3. QUANTITY must match (e.g. 30 tabs = 30 tabs, 20 tabs ≠ 30 tabs). If one has NO quantity and the other has a specific quantity, that is a MISMATCH.
-4. VOLUME must match (e.g. 120ml = 120ml, 60ml ≠ 120ml)
+3. QUANTITY must match (e.g. 30 tabs = 30 tabs, 20 tabs ≠ 30 tabs).
+   EXCEPTION: If Drug A (inventory) does NOT specify a quantity but Drug B does (e.g. "ACRETIN 0.05% CREAM" vs "ACRETIN 0.05% CREAM 30 GM"), this is NOT a mismatch — inventory names are often abbreviated and omit quantity/weight/volume. Only reject if BOTH specify a quantity AND they differ.
+4. VOLUME must match (e.g. 120ml = 120ml, 60ml ≠ 120ml). Same exception as quantity: missing volume in inventory name is NOT a mismatch.
 5. Different FORM is WRONG (e.g. CREAM ≠ GEL, SYRUP ≠ TABLETS, OINTMENT ≠ CREAM, FOAMING SOLUTION ≠ SACHETS)
 6. Different BRAND is WRONG (e.g. GLUCOPHAGE ≠ GLUCOLIGHT, "TOTAL COD LIVER OIL" ≠ "TOTAL")
 7. "PLUS" or "EXTRA" in one name but not the other is a MISMATCH (e.g. "VIGOTON PLUS" ≠ "VIGOTON")
@@ -44,9 +45,9 @@ Respond in JSON only (ALL three fields are MANDATORY):
 VERIFY_PROMPT = """Verify this drug match:
 
 DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}
+DRUG B (from tawreed): {drug_b}{drug_b_ar_line}
 
-Is this the SAME product? You MUST respond with JSON containing ALL three fields: is_correct, reason, and confidence (0.0-1.0)."""
+Is this the SAME product? The Arabic name can help confirm the match if the English name is ambiguous. You MUST respond with JSON containing ALL three fields: is_correct, reason, and confidence (0.0-1.0)."""
 
 
 def _extract_json(text: str) -> dict | None:
@@ -121,7 +122,15 @@ class AIVerifier:
         self._session: aiohttp.ClientSession | None = None
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._fallback_log: list[str] = []
-        self._failed_combos: set[tuple[str, str]] = set()  # cache of (key_suffix, model) that returned auth errors
+        self._failed_combos: set[tuple[str, str]] = set()
+
+    def get_fallback_log(self) -> str:
+        """Return and clear the API failure log for trace reporting."""
+        if not self._fallback_log:
+            return ""
+        log = "; ".join(self._fallback_log)
+        self._fallback_log.clear()
+        return log
 
     def _build_attempt_plan(self, model: str) -> list[tuple[str, str]]:
         """Build ordered list of (api_key, model) to try, skipping previously failed combos.
@@ -222,12 +231,13 @@ class AIVerifier:
                         break  # try next combo
         return None  # all combos exhausted
 
-    async def verify_one(self, drug_a: str, drug_b: str) -> dict[str, Any]:
+    async def verify_one(self, drug_a: str, drug_b: str, drug_b_ar: str = "") -> dict[str, Any]:
         """Verify a single match. Returns {is_correct, reason, confidence}."""
         if not self._cfg.api_keys and not self._cfg.api_key:
             return {"is_correct": True, "reason": "no_api_key", "confidence": 0.5}
 
-        prompt = VERIFY_PROMPT.format(drug_a=drug_a, drug_b=drug_b)
+        ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
+        prompt = VERIFY_PROMPT.format(drug_a=drug_a, drug_b=drug_b, drug_b_ar_line=ar_line)
         payload = {
             "model": self._cfg.model,
             "messages": [
@@ -246,24 +256,24 @@ class AIVerifier:
         result.pop("agree", None)
         return result
 
-    async def verify_batch(self, matches: list[tuple[str, str, int]]) -> list[dict[str, Any]]:
-        """Verify a batch of matches. Each item is (drug_a, drug_b, row_index)."""
-        tasks = [self.verify_one(a, b) for a, b, _ in matches]
+    async def verify_batch(self, matches: list[tuple[str, str, str, int]]) -> list[dict[str, Any]]:
+        """Verify a batch of matches. Each item is (drug_a, drug_b, drug_b_ar, row_index)."""
+        tasks = [self.verify_one(a, b, ar) for a, b, ar, _ in matches]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         out = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                out.append({"is_correct": True, "reason": f"exception:{r}", "confidence": 0.0, "row_idx": matches[i][2]})
+                out.append({"is_correct": True, "reason": f"exception:{r}", "confidence": 0.0, "row_idx": matches[i][3]})
             else:
-                r["row_idx"] = matches[i][2]
+                r["row_idx"] = matches[i][3]
                 out.append(r)
         return out
 
     async def review_one(
         self, drug_a: str, drug_b: str,
         first_decision: str, first_confidence: float, first_reason: str,
-        api_failed: bool = False,
+        api_failed: bool = False, drug_b_ar: str = "",
     ) -> dict[str, Any]:
         """Ask a second model to review the first AI's decision.
         If api_failed=True, the first AI never made a real decision — ask for fresh verification.
@@ -272,6 +282,7 @@ class AIVerifier:
         if not review_model or (not self._cfg.api_keys and not self._cfg.api_key):
             return {"is_correct": True, "reason": "no_review_model", "confidence": first_confidence}
 
+        ar_line = f"\nDRUG B Arabic: {drug_b_ar}" if drug_b_ar else ""
         if api_failed:
             prompt = f"""The first AI model was UNAVAILABLE (API failure) and could NOT verify this drug match.
 No first-AI decision was made — the algorithmic match was kept by default.
@@ -279,16 +290,16 @@ No first-AI decision was made — the algorithmic match was kept by default.
 Please verify this match from scratch as the FIRST and ONLY AI reviewer:
 
 DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}
+DRUG B (from tawreed): {drug_b}{ar_line}
 
 Is this the SAME product? Apply the strict pharmaceutical matching rules.
 Respond in JSON only:
-{{"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}}"""
+{{"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}}""".format(drug_a=drug_a, drug_b=drug_b, ar_line=ar_line)
         else:
             prompt = f"""Review this AI decision about a drug match:
 
 DRUG A (from inventory): {drug_a}
-DRUG B (from tawreed): {drug_b}
+DRUG B (from tawreed): {drug_b}{ar_line}
 
 First AI decided: {"CORRECT match" if first_decision == "ai_confirmed" else "INCORRECT match"}
 First AI confidence: {first_confidence}
@@ -328,20 +339,20 @@ Respond in JSON only:
         }
 
     async def review_batch(
-        self, items: list[tuple[str, str, str, float, str, int, bool]]
+        self, items: list[tuple[str, str, str, str, float, str, int, bool]]
     ) -> list[dict[str, Any]]:
-        """Review a batch of first-AI decisions. Each item is (drug_a, drug_b, first_decision, first_confidence, first_reason, row_index, api_failed)."""
+        """Review a batch of first-AI decisions. Each item is (drug_a, drug_b, drug_b_ar, first_decision, first_confidence, first_reason, row_index, api_failed)."""
         tasks = [
-            self.review_one(a, b, d, c, r, api_failed=f)
-            for a, b, d, c, r, _, f in items
+            self.review_one(a, b, d, c, r, api_failed=f, drug_b_ar=ar)
+            for a, b, ar, d, c, r, _, f in items
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         out = []
         for i, r in enumerate(results):
             if isinstance(r, Exception):
-                out.append({"is_correct": True, "reason": f"review_exception:{r}", "confidence": items[i][3], "row_idx": items[i][5]})
+                out.append({"is_correct": True, "reason": f"review_exception:{r}", "confidence": items[i][4], "row_idx": items[i][6]})
             else:
-                r["row_idx"] = items[i][5]
+                r["row_idx"] = items[i][6]
                 out.append(r)
         return out
 
@@ -353,7 +364,7 @@ Respond in JSON only:
             return None
 
         candidates_text = "\n".join(
-            f"{i+1}. {c[0]['product_name_en']} (score={c[1]:.1f})"
+            f"{i+1}. {c[0]['product_name_en']} / {c[0].get('product_name_ar', '')} (score={c[1]:.1f})"
             for i, c in enumerate(candidates[:5])
         )
         prompt = f"""Given this drug from inventory: "{drug_name}"
