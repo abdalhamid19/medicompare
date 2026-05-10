@@ -28,7 +28,7 @@ pip install -r requirements.txt
 ```
 AGENT_ROUTER_API_KEY=your-key
 AGENT_ROUTER_BASE_URL=https://opencode.ai/zen/v1
-AGENT_ROUTER_MODEL=minimax-2.5-free
+AGENT_ROUTER_MODEL=minimax-m2.5-free
 OPENCODE_API_KEY=your-opencode-key
 OPENROUTER_API_KEY=your-openrouter-key
 REVIEW_MODEL=big-pickle
@@ -71,7 +71,7 @@ python run_matcher.py --limit 10 --log-level DEBUG
 python run_matcher.py --limit 50 --trace
 
 # استخدام مزود AI محدد (--provider)
-python run_ai_verify.py --provider opencode --model minimax-2.5-free
+python run_ai_verify.py --provider opencode --model minimax-m2.5-free
 python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
 python run_ai_verify.py --provider openrouter --model openai/gpt-oss-120b:free
 
@@ -79,14 +79,14 @@ python run_ai_verify.py --provider openrouter --model openai/gpt-oss-120b:free
 python run_ai_verify.py --provider opencode --api-key sk-xxx
 
 # مراجعة AI: نموذج ثاني يراجع قرارات النموذج الأول
-python run_matcher.py --provider opencode --model minimax-2.5-free --review-model big-pickle
-python run_ai_verify.py --provider opencode --model minimax-2.5-free --review-model big-pickle
+python run_matcher.py --provider opencode --model minimax-m2.5-free --review-model big-pickle
+python run_ai_verify.py --provider opencode --model minimax-m2.5-free --review-model big-pickle
 
 # مراجعة فقط للقرارات بثقة أقل من 0.9
 python run_matcher.py --review-model big-pickle --review-threshold 0.9
 
 # مراجعة كاملة (كل قرارات AI) + تتبع
-python run_matcher.py --provider opencode --model minimax-2.5-free --review-model big-pickle --review-threshold 1.0 --trace --limit 50
+python run_matcher.py --provider opencode --model minimax-m2.5-free --review-model big-pickle --review-threshold 1.0 --trace --limit 50
 
 # اختبار اتصال API
 python test_api.py
