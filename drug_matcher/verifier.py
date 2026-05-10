@@ -192,17 +192,18 @@ class AIVerifier:
         Order: primary key + primary model → other keys + primary model → fallback models + all keys."""
         keys = self._cfg.api_keys if self._cfg.api_keys else (self._cfg.api_key,)
         models = [model] + list(self._cfg.fallback_models)
+        healthy = set(self._cfg.healthy_combos or ())
         plan = []
         # Phase 1: try primary model with all keys
         for key in keys:
             combo = (key[-6:], models[0])
-            if combo not in self._failed_combos:
+            if combo not in self._failed_combos and (not healthy or combo in healthy):
                 plan.append((key, models[0]))
         # Phase 2: try each fallback model with all keys
         for mdl in models[1:]:
             for key in keys:
                 combo = (key[-6:], mdl)
-                if combo not in self._failed_combos:
+                if combo not in self._failed_combos and (not healthy or combo in healthy):
                     plan.append((key, mdl))
         return plan
 

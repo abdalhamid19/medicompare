@@ -89,6 +89,7 @@ class TraceLogTests(unittest.TestCase):
     def test_summary_contains_one_row_per_drug(self) -> None:
         trace = MatchTraceLog(enabled=True)
         comp = parse_drug("UNKNOWN PRODUCT")
+        trace.log_ai_preflight_start(["model-a"], 2)
         trace.log_final(
             "D-1", "UNKNOWN PRODUCT", comp.normalized, comp.brand,
             None, 0.0, "no_match", "search",
@@ -101,6 +102,24 @@ class TraceLogTests(unittest.TestCase):
         self.assertEqual(rows[0]["code"], "D-1")
         self.assertEqual(rows[0]["final_status"], "no_match")
         self.assertEqual(rows[0]["failure_stage"], "matching")
+
+    def test_preflight_events_are_traceable(self) -> None:
+        trace = MatchTraceLog(enabled=True)
+
+        trace.log_ai_preflight_start(["bad", "good"], 2)
+        trace.log_ai_preflight_result(
+            [
+                {"ok": False, "error_type": "http_401"},
+                {"ok": True, "error_type": ""},
+            ],
+            healthy_count=1,
+        )
+
+        self.assertEqual(trace._rows[0]["step"], "ai_preflight_start")
+        self.assertEqual(trace._rows[0]["phase"], "ai_preflight")
+        self.assertIn("2 key", trace._rows[0]["selection_reason"])
+        self.assertEqual(trace._rows[1]["decision"], "healthy")
+        self.assertIn("healthy_combos=1", trace._rows[1]["selection_reason"])
 
     def test_post_cleanup_rejection_is_logged(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)

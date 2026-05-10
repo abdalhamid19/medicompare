@@ -2,7 +2,9 @@
 import argparse
 import asyncio
 import logging
+import os
 
+from drug_matcher.ai_health import AIKey, dedupe, run_health_checks, write_reports
 from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env, resolve_api_config, PROVIDERS
 from drug_matcher.pipeline import MatchPipeline
 
@@ -26,7 +28,77 @@ def parse_args():
     parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
     parser.add_argument("--review-model", default=None, help="Second AI model for cross-review (e.g. big-pickle)")
     parser.add_argument("--review-threshold", type=float, default=None, help="Review AI decisions with confidence below this (default: 1.0)")
+    parser.add_argument("--no-ai-preflight", action="store_true", help="Skip AI health preflight")
+    parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
     return parser.parse_args()
+
+
+def _key_items(keys: tuple[str, ...]) -> list[AIKey]:
+    return [AIKey(f"key_{i + 1}", key) for i, key in enumerate(keys) if key]
+
+
+def _healthy_rows(rows):
+    return [row for row in rows if row.get("ok") and row.get("mode") == "json"]
+
+
+def _apply_preflight(api_cfg, rows):
+    healthy = _healthy_rows(rows)
+    if not healthy:
+        return APIConfig(
+            api_key="",
+            api_keys=(),
+            base_url=api_cfg.base_url,
+            model=api_cfg.model,
+            fallback_models=api_cfg.fallback_models,
+            review_model="",
+            healthy_combos=(),
+            max_tokens=api_cfg.max_tokens,
+            temperature=api_cfg.temperature,
+        )
+    primary = str(healthy[0]["model"])
+    healthy_models = dedupe([str(row["model"]) for row in healthy])
+    review_model = api_cfg.review_model if api_cfg.review_model in healthy_models else ""
+    key_suffixes = {str(row["key_masked"])[-6:] for row in healthy}
+    keys = tuple(key for key in api_cfg.api_keys if key[-6:] in key_suffixes)
+    combos = tuple((str(row["key_masked"])[-6:], str(row["model"])) for row in healthy)
+    return APIConfig(
+        api_key=keys[0] if keys else "",
+        api_keys=keys,
+        base_url=api_cfg.base_url,
+        model=primary,
+        fallback_models=tuple(m for m in healthy_models if m != primary),
+        review_model=review_model,
+        healthy_combos=combos,
+        max_tokens=api_cfg.max_tokens,
+        temperature=api_cfg.temperature,
+    )
+
+
+async def _preflight_api(api_cfg, timeout, trace=None):
+    keys = _key_items(api_cfg.api_keys)
+    models = dedupe(
+        [api_cfg.model] + list(api_cfg.fallback_models)
+        + ([api_cfg.review_model] if api_cfg.review_model else [])
+    )
+    if not keys or not models:
+        return api_cfg
+    if trace and trace.enabled:
+        trace.log_ai_preflight_start(models, len(keys))
+    rows = await run_health_checks(
+        keys, models, ["json"], timeout_s=timeout,
+        max_tokens=min(api_cfg.max_tokens, 256),
+        concurrency=min(len(keys) * len(models), 4),
+        base_url=api_cfg.base_url,
+    )
+    write_reports(rows)
+    healthy_count = len(_healthy_rows(rows))
+    if trace and trace.enabled:
+        trace.log_ai_preflight_result(rows, healthy_count)
+    logger.info(
+        "AI preflight: %s/%s healthy model/key combos",
+        healthy_count, len(rows),
+    )
+    return _apply_preflight(api_cfg, rows)
 
 
 def main():
@@ -55,10 +127,18 @@ def main():
         base_url=resolved["base_url"],
         model=resolved["model"],
         fallback_models=resolved.get("fallback_models", ()),
-        review_model=args.review_model or "",
+        review_model=args.review_model or os.getenv("REVIEW_MODEL", ""),
         max_tokens=512,
         temperature=0.1,
     )
+
+    trace = None
+    if args.trace:
+        from drug_matcher.trace_log import MatchTraceLog
+        trace = MatchTraceLog(enabled=True)
+
+    if not args.no_ai and not args.no_ai_preflight and api_cfg.api_key:
+        api_cfg = asyncio.run(_preflight_api(api_cfg, args.ai_timeout, trace))
 
     # Resolve start/end from --resume or explicit args
     start = args.start
@@ -72,9 +152,8 @@ def main():
             logger.info("No progress file found — starting from beginning")
 
     pipeline = MatchPipeline(cfg=match_cfg, api_cfg=api_cfg, limit=args.limit, start=start, end=end)
-    if args.trace:
-        from drug_matcher.trace_log import MatchTraceLog
-        pipeline._trace = MatchTraceLog(enabled=True)
+    if trace:
+        pipeline._trace = trace
     result = asyncio.run(pipeline.run_full(output_path=args.output, skip_ai=args.no_ai))
 
     return result

@@ -226,6 +226,34 @@ class AIVerifierTests(unittest.TestCase):
         self.assertLessEqual(result["confidence"], 0.5)
         self.assertTrue(result["parse_failed"])
 
+    def test_attempt_plan_uses_only_healthy_combos_when_present(self) -> None:
+        cfg = APIConfig(
+            api_key="sk-primary-111111",
+            api_keys=("sk-primary-111111", "sk-secondary-222222"),
+            model="bad-model",
+            fallback_models=("good-model", "other-model"),
+            healthy_combos=(("222222", "good-model"),),
+        )
+        verifier = AIVerifier(cfg)
+
+        plan = verifier._build_attempt_plan("bad-model")
+
+        self.assertEqual(plan, [("sk-secondary-222222", "good-model")])
+
+    def test_attempt_plan_skips_failed_healthy_combo(self) -> None:
+        cfg = APIConfig(
+            api_key="sk-primary-111111",
+            api_keys=("sk-primary-111111",),
+            model="good-model",
+            healthy_combos=(("111111", "good-model"),),
+        )
+        verifier = AIVerifier(cfg)
+        verifier._failed_combos.add(("111111", "good-model"))
+
+        plan = verifier._build_attempt_plan("good-model")
+
+        self.assertEqual(plan, [])
+
 
 if __name__ == "__main__":
     unittest.main()

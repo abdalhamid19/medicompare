@@ -535,6 +535,46 @@ class MatchTraceLog:
         row["selection_reason"] = reason
         self._rows.append(row)
 
+    def log_ai_preflight_start(self, models, key_count):
+        self._append(
+            "", "", "", "",
+            step="ai_preflight_start",
+            phase="ai_preflight",
+            decision="started",
+            decision_source="ai_health",
+            selection_reason=(
+                f"testing {key_count} key(s) x {len(models)} model(s): "
+                f"{', '.join(models)}"
+            ),
+        )
+
+    def log_ai_preflight_result(self, rows, healthy_count):
+        status = "healthy" if healthy_count else "no_healthy_model"
+        self._append(
+            "", "", "", "",
+            step="ai_preflight_result",
+            phase="ai_preflight",
+            decision=status,
+            decision_source="ai_health",
+            error_stage="" if healthy_count else "ai_preflight",
+            error_code="" if healthy_count else "no_healthy_model",
+            selection_reason=(
+                f"healthy_combos={healthy_count}; "
+                f"tested={len(rows)}; "
+                f"failures={self._preflight_failures(rows)}"
+            ),
+        )
+
+    @staticmethod
+    def _preflight_failures(rows):
+        counts = {}
+        for row in rows:
+            if row.get("ok"):
+                continue
+            key = row.get("error_type") or "unknown"
+            counts[key] = counts.get(key, 0) + 1
+        return "; ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
+
     def log_api_attempts(self, code, name, norm, brand, attempts, row_index=""):
         if not self._enabled:
             return
@@ -630,6 +670,8 @@ class MatchTraceLog:
     def _summary_rows(self):
         grouped: dict[tuple[str, str], list[dict]] = {}
         for row in self._rows:
+            if not row["drug_code"] and not row["drug_name"]:
+                continue
             grouped.setdefault(
                 (row["drug_code"], row["drug_name"]), [],
             ).append(row)
@@ -864,6 +906,8 @@ class MatchTraceLog:
                 f"  [AI {row['ai_phase'].upper()}] "
                 f"SKIPPED: {row['selection_reason']}\n",
             )
+        elif step in {"ai_preflight_start", "ai_preflight_result"}:
+            f.write(f"  [AI PREFLIGHT] {row['selection_reason']}\n")
         elif step == "api_attempt":
             f.write(
                 f"  [API] model={row['model_used']} "

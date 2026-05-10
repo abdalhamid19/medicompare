@@ -113,6 +113,7 @@ class APIConfig:
         m.strip() for m in os.getenv("FALLBACK_MODELS", "").split(",") if m.strip()
     ))
     review_model: str = field(default_factory=lambda: os.getenv("REVIEW_MODEL", ""))
+    healthy_combos: tuple = ()
     max_tokens: int = 1024
     temperature: float = 0.1
 
