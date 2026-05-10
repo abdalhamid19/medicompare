@@ -72,6 +72,7 @@ class NormalizerTests(unittest.TestCase):
             ("ALOEKITA HAIR GROWTH SPRAY 200 ML", "ALOEKITA"),
             ("ALOEKITA CAFFEINE RICH DS DA SHAMPOO 250 ML", "ALOEKITA"),
             ("ALKA MISR ALKALINE WASH POWDER 12 SACHETS", "ALKAMISR"),
+            ("AMIKACIN AMOUN 500 MG / 2 ML VIAL", "AMIKACIN"),
             ("aig esomeprprazole 40ml 28capsules", "AIG"),
         ]
         for raw, expected in cases:
@@ -101,6 +102,7 @@ class NormalizerTests(unittest.TestCase):
             ("PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TABLETS"),
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB IMP"),
             ("ALLERBAN SYRUP 120ML", "ALLERBAN 1 MG / 5 ML SYRUP 100 ML"),
+            ("AMIKACIN 500MG VIAL", "AMIKACIN AMOUN 500 MG / 2 ML VIAL"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

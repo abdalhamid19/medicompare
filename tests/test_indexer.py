@@ -124,6 +124,11 @@ def make_reported_errors_index(threshold: int = 70) -> DrugIndex:
                 "store_product_id": "1503239",
             },
             {
+                "product_name_ar": "اميكاسين امون",
+                "product_name_en": "AMIKACIN AMOUN 500 MG / 2 ML VIAL",
+                "store_product_id": "2497706",
+            },
+            {
                 "product_name_ar": "اموسار فورت",
                 "product_name_en": "AMOSAR FORTE 100 / 25 MG 30 F.C.TAB.",
                 "store_product_id": "2468431",
@@ -290,6 +295,7 @@ class DrugIndexTests(unittest.TestCase):
             ("AMAGLUST 30/2 MG 30 TAB", "2142626"),
             ("AMAGLUST 30/4 MG 30TAB", "902038"),
             ("AMARYL M 2M/500MG 30TAB", "902043"),
+            ("AMIKACIN 500MG VIAL", "2497706"),
             ("AMOSAR FORET 100/25 MG 30 TAB", "2468431"),
             ("ANDODERMA GEL 50 ML", "902128"),
             ("ANDOFLOZIN XR 25MG*100 MG", "83875"),
@@ -324,7 +330,16 @@ class DrugIndexTests(unittest.TestCase):
         self.assertGreaterEqual(score, 65)
 
     def test_reported_vial_spray_mismatch_stays_rejected(self) -> None:
-        index = make_reported_errors_index(threshold=65)
+        tawreed = pd.DataFrame(
+            [
+                {
+                    "product_name_ar": "اميكاسين بخاخ",
+                    "product_name_en": "AMIKACIN SPRAY 100 ML",
+                    "store_product_id": "1503239",
+                },
+            ],
+        )
+        index = DrugIndex(tawreed, MatchingConfig(fuzzy_threshold=65))
 
         record, score, method = index.best_match("AMIKACIN 500MG VIAL")
 
