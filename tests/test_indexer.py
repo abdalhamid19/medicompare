@@ -68,6 +68,36 @@ def make_reported_errors_index(threshold: int = 70) -> DrugIndex:
                 "product_name_en": "ALGESAL SURACTIVE 40 GM CREAM",
                 "store_product_id": "987471",
             },
+            {
+                "product_name_ar": "ايه اي جي 21",
+                "product_name_en": "AIG ESOMEPRAZOLE 40 MG 21 CAPS.",
+                "store_product_id": "83227",
+            },
+            {
+                "product_name_ar": "الليربان",
+                "product_name_en": "ALLERBAN 1 MG / 5 ML SYRUP 100 ML",
+                "store_product_id": "907705",
+            },
+            {
+                "product_name_ar": "الوكيتا شامبو",
+                "product_name_en": "ALOEKITA DS HAIR SHAMPOO 250 ML ANTI HAIR FALL",
+                "store_product_id": "2622820",
+            },
+            {
+                "product_name_ar": "الوكيتا بخاخ",
+                "product_name_en": "ALOEKITA HAIR SPRAY 200 ML",
+                "store_product_id": "2097309",
+            },
+            {
+                "product_name_ar": "الفانوفا",
+                "product_name_en": "ALPHANOVA 0.15 % EYE DROPS 5 ML",
+                "store_product_id": "2144773",
+            },
+            {
+                "product_name_ar": "الفانوفا بلس",
+                "product_name_en": "ALPHANOVA PLUS EYE DROPS 5 ML",
+                "store_product_id": "2462819",
+            },
         ]
     )
     cfg = MatchingConfig(fuzzy_threshold=threshold, top_k_candidates=10)
@@ -168,6 +198,10 @@ class DrugIndexTests(unittest.TestCase):
             ("ALEXOLYTE 360ML PINEAPPLE FLAVOR", "1533835"),
             ("ALEXOLYTE 360ML STRAWBERRY FLAVOR", "2468398"),
             ("ALGESAL CREAM 40 GM", "987471"),
+            ("ALOEKITA CAFFEINE RICH ds da SHAMPOO 250 ML", "2622820"),
+            ("ALOEKITA HAIR GROWTH SPRAY 200 ML", "2097309"),
+            ("ALPHANOVA OPHTALMIC SOLUTION 5 ML", "2144773"),
+            ("ALPHANOVA PLUS OPHTALMIC SOLUTION 5 ML", "2462819"),
         ]
         for query, expected_id in cases:
             with self.subTest(query=query):
@@ -177,6 +211,18 @@ class DrugIndexTests(unittest.TestCase):
                 self.assertEqual(record["store_product_id"], expected_id)
                 self.assertGreaterEqual(score, 65)
                 self.assertNotEqual(method, "no_match")
+
+    def test_reported_aig_prefers_matching_capsule_count(self) -> None:
+        index = make_reported_errors_index(threshold=65)
+
+        record, score, method = index.best_match(
+            "aig esomeprprazole 40ml 28capsules",
+        )
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["store_product_id"], "2435517")
+        self.assertGreaterEqual(score, 65)
 
     def test_reported_modifier_mismatch_stays_rejected(self) -> None:
         index = make_reported_errors_index(threshold=65)

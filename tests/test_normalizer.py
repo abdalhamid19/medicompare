@@ -58,6 +58,26 @@ class NormalizerTests(unittest.TestCase):
         self.assertEqual(comp.qty, "30")
         self.assertEqual(comp.weight, "20")
 
+    def test_parse_drug_extracts_capsules_quantity(self) -> None:
+        comp = parse_drug("AIG ESOMEPRAZOLE 40 MG 28 CAPSULES 2 STRIPS")
+
+        self.assertEqual(comp.brand, "AIG")
+        self.assertEqual(comp.dosage_nums, ("40",))
+        self.assertEqual(comp.qty, "28")
+
+    def test_parse_drug_ignores_descriptors_in_brand(self) -> None:
+        cases = [
+            ("ALPHANOVA OPHTALMIC SOLUTION 5 ML", "ALPHANOVA"),
+            ("ALPHANOVA PLUS OPHTALMIC SOLUTION 5 ML", "ALPHANOVAPLUS"),
+            ("ALOEKITA HAIR GROWTH SPRAY 200 ML", "ALOEKITA"),
+            ("ALOEKITA CAFFEINE RICH DS DA SHAMPOO 250 ML", "ALOEKITA"),
+            ("ALKA MISR ALKALINE WASH POWDER 12 SACHETS", "ALKAMISR"),
+            ("aig esomeprprazole 40ml 28capsules", "AIG"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_drug(raw).brand, expected)
+
     def test_components_match_rejects_unsafe_matches(self) -> None:
         cases = [
             ("VIGOTON PLUS 20 TABS", "VIGOTON 30 TABS", "different_modifier"),

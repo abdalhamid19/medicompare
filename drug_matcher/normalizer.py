@@ -23,14 +23,19 @@ FORM_PREFIXES = frozenset({
     "EMULGEL", "INJECTION", "INFUSION", "SOLUTION", "SOLN",
     "TOPICAL", "ORAL", "EYE", "NASAL", "EAR", "INTIMATE",
     "MASSAGE", "FEMININE", "CLEANSER", "WASH", "DOUCHE",
-    "INHALER", "INH",
+    "INHALER", "INH", "OPHTALMIC", "DROPS",
 })
 
 NOISE_WORDS = frozenset({
     "BLUE", "RED", "WHITE", "ORS", "FLAVOR", "FLAVOUR",
     "LIQUID", "FACIAL",
 })
-BRAND_QUALIFIERS = frozenset({"INFINITY", "SURACTIVE"})
+BRAND_QUALIFIERS = frozenset({
+    "INFINITY", "SURACTIVE", "ALKALINE", "ESOMEPRAZOLE",
+    "OPHTALMIC", "HAIR", "GROWTH", "CAFFEINE", "RICH",
+    "DS", "DA", "ANTI",
+})
+ACRONYM_BRANDS = frozenset({"AIG"})
 FLAVOR_WORDS = frozenset({
     "BANANA", "ORANGE", "PINEAPPLE", "STRAWBERRY",
 })
@@ -63,8 +68,9 @@ _DOSAGE_RE = re.compile(
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(
     r"(\d+)\s*"
-    r"(TAB|TABS|CAP|CAPS|SACHET|SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|"
-    r"CARTRIDGE|GUMMIES|GUM|PACKETS)\b",
+    r"(TABLETS|TABLET|TABS|TAB|CAPSULES|CAPSULE|CAPS|CAP|SACHETS|SACHET|"
+    r"SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|"
+    r"PACKETS)\b",
     re.IGNORECASE,
 )
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
@@ -134,17 +140,22 @@ def parse_drug(name: str) -> DrugComponents:
 
     # Brand: first alphabetic words before any number
     words = norm.split()
+    if words and words[0] in ACRONYM_BRANDS:
+        brand = words[0]
+    else:
+        brand = ""
     brand_words: list[str] = []
-    for w in words:
-        if re.search(r"\d", w):
-            break
-        if (
-            w in FORM_PREFIXES or w in FORM_WORDS
-            or w in NOISE_WORDS or w in BRAND_QUALIFIERS
-        ):
-            break
-        brand_words.append(w)
-    brand = "".join(brand_words)
+    if not brand:
+        for w in words:
+            if re.search(r"\d", w):
+                break
+            if (
+                w in FORM_PREFIXES or w in FORM_WORDS
+                or w in NOISE_WORDS or w in BRAND_QUALIFIERS
+            ):
+                break
+            brand_words.append(w)
+        brand = "".join(brand_words)
     if not brand and words and words[0] in BRAND_QUALIFIERS:
         brand = "".join(
             w for w in words[1:]
