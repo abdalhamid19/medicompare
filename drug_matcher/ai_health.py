@@ -6,7 +6,7 @@ import csv
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,147 @@ def dedupe(items: list[str]) -> list[str]:
 
 def mask_key(key: str) -> str:
     return f"...{key[-6:]}" if key else ""
+
+
+def _clean_header(value: Any) -> str:
+    return str(value).strip() if value not in (None, "") else ""
+
+
+def _duration_from_seconds(seconds: float) -> str:
+    seconds = max(0, int(round(seconds)))
+    days, rem = divmod(seconds, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, secs = divmod(rem, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def reset_in_text(value: Any, now: float | None = None) -> str:
+    """Render common rate-limit reset header formats as a remaining duration."""
+    raw = _clean_header(value)
+    if not raw:
+        return ""
+    now = time.time() if now is None else now
+    if raw.isdigit():
+        number = float(raw)
+        # Small values are usually delta seconds, large values are Unix time.
+        seconds = number - now if number > 1_000_000_000 else number
+        return _duration_from_seconds(seconds)
+    try:
+        return _duration_from_seconds(float(raw))
+    except ValueError:
+        pass
+    try:
+        reset_at = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if reset_at.tzinfo is None:
+            reset_at = reset_at.replace(tzinfo=timezone.utc)
+        return _duration_from_seconds(reset_at.timestamp() - now)
+    except ValueError:
+        return raw
+
+
+def _first_header(headers, names: list[str]) -> str:
+    for name in names:
+        value = headers.get(name)
+        if value not in (None, ""):
+            return _clean_header(value)
+    return ""
+
+
+def extract_quota_headers(headers) -> dict[str, str]:
+    """Capture provider rate-limit headers without assuming one exact schema."""
+    minute_limit = _first_header(headers, [
+        "x-ratelimit-limit-requests-minute",
+        "x-ratelimit-limit-minute",
+        "x-rpm-limit",
+        "x-ratelimit-limit-rpm",
+    ])
+    minute_remaining = _first_header(headers, [
+        "x-ratelimit-remaining-requests-minute",
+        "x-ratelimit-remaining-minute",
+        "x-rpm-remaining",
+        "x-ratelimit-remaining-rpm",
+    ])
+    minute_reset = _first_header(headers, [
+        "x-ratelimit-reset-requests-minute",
+        "x-ratelimit-reset-minute",
+        "x-rpm-reset",
+        "x-ratelimit-reset-rpm",
+    ])
+    day_limit = _first_header(headers, [
+        "x-ratelimit-limit-requests-day",
+        "x-ratelimit-limit-day",
+        "x-rpd-limit",
+        "x-daily-limit",
+    ])
+    day_remaining = _first_header(headers, [
+        "x-ratelimit-remaining-requests-day",
+        "x-ratelimit-remaining-day",
+        "x-rpd-remaining",
+        "x-daily-remaining",
+    ])
+    day_reset = _first_header(headers, [
+        "x-ratelimit-reset-requests-day",
+        "x-ratelimit-reset-day",
+        "x-rpd-reset",
+        "x-daily-reset",
+    ])
+    request_limit = _first_header(headers, [
+        "x-ratelimit-limit-requests",
+        "ratelimit-limit",
+        "x-ratelimit-limit",
+    ])
+    request_remaining = _first_header(headers, [
+        "x-ratelimit-remaining-requests",
+        "ratelimit-remaining",
+        "x-ratelimit-remaining",
+    ])
+    request_reset = _first_header(headers, [
+        "x-ratelimit-reset-requests",
+        "ratelimit-reset",
+        "x-ratelimit-reset",
+    ])
+    token_limit = _first_header(headers, ["x-ratelimit-limit-tokens"])
+    token_remaining = _first_header(headers, ["x-ratelimit-remaining-tokens"])
+    token_reset = _first_header(headers, ["x-ratelimit-reset-tokens"])
+    retry_after = _first_header(headers, ["retry-after"])
+    best_reset = day_reset or minute_reset or request_reset or retry_after
+    rate_headers = {
+        str(k).lower(): str(v)
+        for k, v in headers.items()
+        if "rate" in str(k).lower() or "quota" in str(k).lower()
+        or str(k).lower() in {"retry-after"}
+    }
+    return {
+        "quota_limit_minute": minute_limit,
+        "quota_remaining_minute": minute_remaining,
+        "quota_reset_minute": minute_reset,
+        "quota_reset_minute_in": reset_in_text(minute_reset),
+        "quota_limit_day": day_limit,
+        "quota_remaining_day": day_remaining,
+        "quota_reset_day": day_reset,
+        "quota_reset_day_in": reset_in_text(day_reset),
+        "rate_limit_requests": request_limit,
+        "rate_remaining_requests": request_remaining,
+        "rate_reset_requests": request_reset,
+        "rate_reset_requests_in": reset_in_text(request_reset),
+        "rate_limit_tokens": token_limit,
+        "rate_remaining_tokens": token_remaining,
+        "rate_reset_tokens": token_reset,
+        "rate_reset_tokens_in": reset_in_text(token_reset),
+        "retry_after": retry_after,
+        "retry_after_in": reset_in_text(retry_after),
+        "quota_reset_in": reset_in_text(best_reset),
+        "rate_headers": json.dumps(rate_headers, ensure_ascii=False),
+    }
 
 
 def build_payload(model: str, mode: str, max_tokens: int) -> dict[str, Any]:
@@ -117,6 +258,26 @@ def empty_result(key: AIKey, model: str, mode: str, base_url: str) -> dict[str, 
         "error_message": "",
         "content_excerpt": "",
         "raw_excerpt": "",
+        "quota_limit_minute": "",
+        "quota_remaining_minute": "",
+        "quota_reset_minute": "",
+        "quota_reset_minute_in": "",
+        "quota_limit_day": "",
+        "quota_remaining_day": "",
+        "quota_reset_day": "",
+        "quota_reset_day_in": "",
+        "rate_limit_requests": "",
+        "rate_remaining_requests": "",
+        "rate_reset_requests": "",
+        "rate_reset_requests_in": "",
+        "rate_limit_tokens": "",
+        "rate_remaining_tokens": "",
+        "rate_reset_tokens": "",
+        "rate_reset_tokens_in": "",
+        "retry_after": "",
+        "retry_after_in": "",
+        "quota_reset_in": "",
+        "rate_headers": "",
     }
 
 
@@ -154,8 +315,10 @@ async def test_one(
 
 async def _handle_response(resp, result: dict[str, Any]) -> dict[str, Any]:
     result["http_status"] = resp.status
+    result.update(extract_quota_headers(resp.headers))
     text = await resp.text()
     result["raw_excerpt"] = text[:500].replace("\n", "\\n")
+    _apply_error_quota_hints(text, result)
     if resp.status != 200:
         result["error_type"] = f"http_{resp.status}"
         result["error_message"] = text[:300].replace("\n", " ")
@@ -173,6 +336,21 @@ async def _handle_response(resp, result: dict[str, Any]) -> dict[str, Any]:
         result["error_message"] = content_error
         return result
     return _validate_content(content, result)
+
+
+def _apply_error_quota_hints(text: str, result: dict[str, Any]) -> None:
+    """Infer quota reset from provider error body when headers are sparse."""
+    if "FreeUsageLimitError" not in text:
+        return
+    retry_after = result.get("retry_after", "")
+    retry_after_in = result.get("retry_after_in", "")
+    if retry_after and not result.get("quota_reset_day"):
+        result["quota_reset_day"] = retry_after
+        result["quota_reset_day_in"] = retry_after_in
+    if retry_after_in and not result.get("quota_reset_in"):
+        result["quota_reset_in"] = retry_after_in
+    if not result.get("quota_remaining_day"):
+        result["quota_remaining_day"] = "0"
 
 
 def _validate_content(content: str, result: dict[str, Any]) -> dict[str, Any]:

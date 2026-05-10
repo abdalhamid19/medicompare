@@ -46,16 +46,45 @@ def configured_models() -> list[str]:
 
 def print_row(row: dict) -> None:
     status = "OK" if row["ok"] else "FAIL"
+    minute = _quota_text(
+        row.get("quota_remaining_minute"),
+        row.get("quota_limit_minute"),
+        row.get("quota_reset_minute_in"),
+    )
+    day = _quota_text(
+        row.get("quota_remaining_day"),
+        row.get("quota_limit_day"),
+        row.get("quota_reset_day_in"),
+    )
+    requests = _quota_text(
+        row.get("rate_remaining_requests"),
+        row.get("rate_limit_requests"),
+        row.get("rate_reset_requests_in"),
+    )
+    quota_reset = row.get("quota_reset_in") or "n/a"
     print(
         f"{status:4} key={row['key_name']}({row['key_masked']}) "
         f"model={row['model']} mode={row['mode']} "
         f"http={row['http_status']} elapsed={row['elapsed_s']}s "
         f"json={row['json_ok']} schema={row['schema_ok']} "
+        f"rpm={minute} day={day} req={requests} "
+        f"quota_reset={quota_reset} "
         f"error={row['error_type']}",
         flush=True,
     )
     if row["error_message"]:
         print(f"     {row['error_message'][:220]}", flush=True)
+    if row.get("retry_after_in"):
+        print(f"     retry_after={row['retry_after_in']}", flush=True)
+    if row.get("rate_headers") and row.get("rate_headers") != "{}":
+        print(f"     rate_headers={row['rate_headers'][:300]}", flush=True)
+
+
+def _quota_text(remaining, limit, reset_in) -> str:
+    remaining = str(remaining or "n/a")
+    limit = str(limit or "n/a")
+    reset = f", reset={reset_in}" if reset_in else ""
+    return f"{remaining}/{limit}{reset}"
 
 
 async def run(args) -> int:
