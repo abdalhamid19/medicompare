@@ -73,6 +73,20 @@ _IMPORT_MARKER_RE = re.compile(
     r"(^[+*.]+\s*(IMP|IMPORTED))|\b(IMP|IMPORTED)\b",
     re.IGNORECASE,
 )
+_AR_DIACRITICS_RE = re.compile(r"[\u064B-\u065F\u0670]")
+
+
+def normalize_arabic(name: str) -> str:
+    """Normalize Arabic product text for auxiliary matching signals."""
+    if not name or not isinstance(name, str):
+        return ""
+    text = _AR_DIACRITICS_RE.sub("", name.strip())
+    text = re.sub("[إأآٱ]", "ا", text)
+    text = text.replace("ى", "ي")
+    text = text.replace("ؤ", "و").replace("ئ", "ي")
+    text = text.replace("ة", "ه")
+    text = re.sub(r"[^\w\s\u0600-\u06FF]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
 
 def normalize(name: str) -> str:
     if not name or not isinstance(name, str):

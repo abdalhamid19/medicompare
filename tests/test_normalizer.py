@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from drug_matcher.normalizer import components_match, normalize, parse_drug
+from drug_matcher.normalizer import (
+    components_match, normalize, normalize_arabic, parse_drug,
+)
 
 
 class NormalizerTests(unittest.TestCase):
@@ -21,6 +23,17 @@ class NormalizerTests(unittest.TestCase):
         for raw, expected in cases:
             with self.subTest(raw=raw):
                 self.assertEqual(normalize(raw), expected)
+
+    def test_normalize_arabic_unifies_common_letters(self) -> None:
+        cases = [
+            ("إيزوميبرازول ٤٠ مجم", "ايزوميبرازول ٤٠ مجم"),
+            ("كبسولة", "كبسوله"),
+            ("على", "علي"),
+            ("أقراص", "اقراص"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(normalize_arabic(raw), expected)
 
     def test_parse_drug_extracts_core_components(self) -> None:
         comp = parse_drug("+***IMP AUGMENTIN625MG 10TABS")
