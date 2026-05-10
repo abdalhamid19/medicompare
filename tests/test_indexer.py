@@ -98,6 +98,89 @@ def make_reported_errors_index(threshold: int = 70) -> DrugIndex:
                 "product_name_en": "ALPHANOVA PLUS EYE DROPS 5 ML",
                 "store_product_id": "2462819",
             },
+            {
+                "product_name_ar": "الكا مصر",
+                "product_name_en": "ALKA MISR ALKALINE WASH POWDER 12 SACHETS",
+                "store_product_id": "2468375",
+            },
+            {
+                "product_name_ar": "اماجلوست 2",
+                "product_name_en": "AMAGLUST 2 / 30 MG 30 SCORED TAB.",
+                "store_product_id": "2142626",
+            },
+            {
+                "product_name_ar": "اماجلوست 4",
+                "product_name_en": "AMAGLUST 4 / 30 MG 30 SCORED TAB.",
+                "store_product_id": "902038",
+            },
+            {
+                "product_name_ar": "اماريل ام",
+                "product_name_en": "AMARYL M 2 / 500 MG 30 F.C.TABS.",
+                "store_product_id": "902043",
+            },
+            {
+                "product_name_ar": "اميكاسين بخاخ",
+                "product_name_en": "AMIKACIN SPRAY 100 ML",
+                "store_product_id": "1503239",
+            },
+            {
+                "product_name_ar": "اموسار فورت",
+                "product_name_en": "AMOSAR FORTE 100 / 25 MG 30 F.C.TAB.",
+                "store_product_id": "2468431",
+            },
+            {
+                "product_name_ar": "اندوديرما",
+                "product_name_en": "ANDODERMA EXTRA EMOLLIENT GEL 50 ML",
+                "store_product_id": "902128",
+            },
+            {
+                "product_name_ar": "اندوفلوزين",
+                "product_name_en": "ANDOFLOZIN XR 25 / 1000 MG 20 F.C. TABS",
+                "store_product_id": "83875",
+            },
+            {
+                "product_name_ar": "انجيوفوكس 25",
+                "product_name_en": "ANGIOFOX (EFFOX) 25 MG LONG 30 CAPS.",
+                "store_product_id": "1771510",
+            },
+            {
+                "product_name_ar": "انجيوفوكس 50",
+                "product_name_en": "ANGIOFOX (EFFOX) 50 MG LONG 20 CAPS.",
+                "store_product_id": "902113",
+            },
+            {
+                "product_name_ar": "ابتاميل",
+                "product_name_en": "APTAMIL 1 ADVANCE MILK 400 GM",
+                "store_product_id": "1148241",
+            },
+            {
+                "product_name_ar": "ارتيلاك",
+                "product_name_en": (
+                    "ARTELAC OPHTIOLE 3.2 MG / ML EYE DROPS "
+                    "10 ML 2 BOTTLES"
+                ),
+                "store_product_id": "81400",
+            },
+            {
+                "product_name_ar": "اتوموكس",
+                "product_name_en": "ATOMOXAPEX 4 MG / ML SYRUP 100 ML",
+                "store_product_id": "1916956",
+            },
+            {
+                "product_name_ar": "اتوريزا",
+                "product_name_en": "ATOREZA 20 / 10 MG 21 F.C. TAB.",
+                "store_product_id": "2601810",
+            },
+            {
+                "product_name_ar": "اوجمنتين ديو",
+                "product_name_en": "AUGMENTIN DUO 228 MG / 5 ML SUSP. 70 ML",
+                "store_product_id": "2369290",
+            },
+            {
+                "product_name_ar": "افاميس",
+                "product_name_en": "AVAMYS NASAL SPRAY 120 DOSES",
+                "store_product_id": "2537745",
+            },
         ]
     )
     cfg = MatchingConfig(fuzzy_threshold=threshold, top_k_candidates=10)
@@ -203,6 +286,21 @@ class DrugIndexTests(unittest.TestCase):
             ("ALPHANOVA OPHTALMIC SOLUTION 5 ML", "2144773"),
             ("ALPHANOVA PLUS OPHTALMIC SOLUTION 5 ML", "2462819"),
             ("ALLERBAN SYRUP 120ML", "907705"),
+            ("ALKA MISR POWDER 10 SACHETS", "2468375"),
+            ("AMAGLUST 30/2 MG 30 TAB", "2142626"),
+            ("AMAGLUST 30/4 MG 30TAB", "902038"),
+            ("AMARYL M 2M/500MG 30TAB", "902043"),
+            ("AMOSAR FORET 100/25 MG 30 TAB", "2468431"),
+            ("ANDODERMA GEL 50 ML", "902128"),
+            ("ANDOFLOZIN XR 25MG*100 MG", "83875"),
+            ("ANGIOFOX 25MG 30 CAPS", "1771510"),
+            ("ANGIOFOX 50 MG 20 TAB", "902113"),
+            ("APTAMIL 1 MILK 400 GM", "1148241"),
+            ("ARTELAC EYE DROPS", "81400"),
+            ("ATOMOXAPEX ORL SOLUTION 40 MG 100 ML", "1916956"),
+            ("ATOREZA 10MG/20MG 21 TAB", "2601810"),
+            ("AUGMENTIN DUO 228 /5 MG SUSP 70 ML", "2369290"),
+            ("AVAMYS 120 SPRAYS", "2537745"),
         ]
         for query, expected_id in cases:
             with self.subTest(query=query):
@@ -224,6 +322,15 @@ class DrugIndexTests(unittest.TestCase):
         assert record is not None
         self.assertEqual(record["store_product_id"], "2435517")
         self.assertGreaterEqual(score, 65)
+
+    def test_reported_vial_spray_mismatch_stays_rejected(self) -> None:
+        index = make_reported_errors_index(threshold=65)
+
+        record, score, method = index.best_match("AMIKACIN 500MG VIAL")
+
+        self.assertIsNone(record)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(method, "no_match")
 
     def test_reported_modifier_mismatch_stays_rejected(self) -> None:
         index = make_reported_errors_index(threshold=65)

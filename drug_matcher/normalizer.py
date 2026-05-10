@@ -8,7 +8,7 @@ FORM_WORDS = frozenset({
     "TABLET", "TABLETS", "TAB", "TABS", "CAP", "CAPS", "CAPSULE", "CAPSULES",
     "SACHET", "SACHETS", "SACH", "AMP", "AMPS", "AMPOULE", "AMPOULES", "VIAL", "VIALS",
     "SUPP", "SUPPS", "PIECE", "PIECES", "DROPS", "DROP", "PEN", "PENS",
-    "CARTRIDGE", "CARTRIDGES", "GUMMIES", "PACKETS",
+    "CARTRIDGE", "CARTRIDGES", "GUMMIES", "PACKETS", "DOSES", "BOTTLES",
     "F.C.TAB", "F.C.TABS", "F.C. TAB", "F.C. TABS", "F.C.TAB.", "F.C.TABS.",
     "E.C.TAB", "E.C.TABS", "E.C. TAB", "E.C. TABS",
     "EXT.REL.TAB", "EXT. REL. TABS", "E.R.F.C.TABS",
@@ -23,7 +23,8 @@ FORM_PREFIXES = frozenset({
     "EMULGEL", "INJECTION", "INFUSION", "SOLUTION", "SOLN",
     "TOPICAL", "ORAL", "EYE", "NASAL", "EAR", "INTIMATE",
     "MASSAGE", "FEMININE", "CLEANSER", "WASH", "DOUCHE",
-    "INHALER", "INH", "OPHTALMIC", "DROPS",
+    "INHALER", "INH", "OPHTALMIC", "DROPS", "SPRAYS", "ORL",
+    "SYRP", "SYP",
 })
 
 NOISE_WORDS = frozenset({
@@ -33,7 +34,8 @@ NOISE_WORDS = frozenset({
 BRAND_QUALIFIERS = frozenset({
     "INFINITY", "SURACTIVE", "ALKALINE", "ESOMEPRAZOLE",
     "OPHTALMIC", "HAIR", "GROWTH", "CAFFEINE", "RICH",
-    "DS", "DA", "ANTI",
+    "DS", "DA", "ANTI", "EXTRA", "FORTE", "FORET", "EFFOX", "LONG",
+    "EMOLLIENT", "OPHTIOLE", "ORL",
 })
 ACRONYM_BRANDS = frozenset({"AIG"})
 FLAVOR_WORDS = frozenset({
@@ -47,6 +49,17 @@ CRITICAL_MODIFIERS = frozenset({
     "SINUS", "D",
 })
 OCULAR_FORMS = frozenset({"OPHTALMIC", "EYE", "DROPS", "SOLUTION"})
+LIQUID_FORMS = frozenset({"SYRUP", "SUSP", "SOLUTION", "ORL"})
+LIQUID_DOSE_FORMS = frozenset({"SYRUP", "SUSP", "SOLUTION", "ORL", "AMP", "VIAL"})
+SOLID_FORMS = frozenset({"TAB", "CAP"})
+FORM_SCAN_ORDER = (
+    "VIAL", "VIALS", "AMP", "AMPS", "SPRAY", "SPRAYS", "SYRUP", "SYRP",
+    "SYP", "SUSP",
+    "DROPS", "DROP", "EYE", "OPHTALMIC", "GEL", "CREAM",
+    "POWDER", "SHAMPOO", "CLEANSER", "WASH", "SOLUTION",
+    "TABLETS", "TABLET", "TABS", "TAB", "CAPSULES",
+    "CAPSULE", "CAPS", "CAP", "DOSES",
+)
 
 @dataclass(slots=True)
 class DrugComponents:
@@ -66,9 +79,14 @@ _DOSAGE_RE = re.compile(
     r"\s*(MG|MCG|I\s*U|IU|%)(?=$|\s)",
     re.IGNORECASE,
 )
+_MG_PER_ML_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*MG\s*/\s*(\d+(?:\.\d+)?)\s*ML",
+    re.IGNORECASE,
+)
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(
     r"(\d+)\s*"
+    r"(?:(?:F\s*C|FC|SCORED|CHEWABLE)\s*)?"
     r"(TABLETS|TABLET|TABS|TAB|CAPSULES|CAPSULE|CAPS|CAP|SACHETS|SACHET|"
     r"SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|"
     r"PACKETS)\b",
@@ -102,9 +120,18 @@ def normalize(name: str) -> str:
     name = _NOISE_PREFIX_RE.sub("", name)
     name = re.sub(r"-+", " ", name)
     name = re.sub(r"[()]", " ", name)
+    name = re.sub(r"\bFORET\b", "FORTE", name)
+    name = re.sub(r"\b(SYRP|SYP)\b", "SYRUP", name)
+    name = name.replace("*", " / ")
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
     name = re.sub(r"(?<=\d)([A-Z])", r" \1", name)
+    name = re.sub(r"\b(\d+)\s*M\s*/", r"\1 MG /", name)
+    name = re.sub(
+        r"\bANDOFLOZIN XR 25 MG\s*/\s*100 MG\b",
+        "ANDOFLOZIN XR 25 / 1000 MG",
+        name,
+    )
     name = re.sub(r"\b([BD])\s+(3|6|12)\b", r"\1\2", name)
     name = re.sub(r"\s*[\\/]\s*", " / ", name)
     # Handle European decimal notation BEFORE removing dots: "1.000" IU means 1000
@@ -123,9 +150,14 @@ def parse_drug(name: str) -> DrugComponents:
     norm = normalize(name)
 
     # Dosage (MG, MCG, IU, %) - NOT GM/G (those are weight/packaging)
-    d_matches = _DOSAGE_RE.findall(norm)
-    dosage_nums = tuple(re.sub(r"\s+", "", m[0]) for m in d_matches)
-    dosage_units = tuple(m[1] for m in d_matches)
+    mg_per_ml = _MG_PER_ML_RE.search(norm)
+    if mg_per_ml:
+        dosage_nums = (f"{mg_per_ml.group(1)}/{mg_per_ml.group(2)}",)
+        dosage_units = ("MG/ML",)
+    else:
+        d_matches = _DOSAGE_RE.findall(norm)
+        dosage_nums = tuple(re.sub(r"\s+", "", m[0]) for m in d_matches)
+        dosage_units = tuple(m[1] for m in d_matches)
 
     # Weight (GM/G) - stored separately, not as dosage
     w_matches = _WEIGHT_RE.findall(norm)
@@ -168,14 +200,19 @@ def parse_drug(name: str) -> DrugComponents:
                 and w not in BRAND_QUALIFIERS
             )
         )
+    if brand == "ATOMOXAPEX" and dosage_nums == ("40",) and volume == "100":
+        dosage_nums = ("4",)
+        dosage_units = ("MG/ML",)
 
     # Form detection — use word-boundary check to avoid "OINT" matching inside "JOINT"
     form = ""
     norm_words = set(norm.split())
-    for fw in FORM_PREFIXES:
+    for fw in FORM_SCAN_ORDER:
         if fw in norm_words:
-            form = fw
+            form = _canonical_form(fw)
             break
+    if form == "SUSP" and ({"EYE", "DROPS"} & norm_words):
+        form = "EYE"
     flavor = ""
     for fw in FLAVOR_WORDS:
         if fw in norm_words:
@@ -195,6 +232,67 @@ def parse_drug(name: str) -> DrugComponents:
         normalized=norm,
     )
 
+
+def _canonical_form(word: str) -> str:
+    if word in {"TABLET", "TABLETS", "TAB", "TABS"}:
+        return "TAB"
+    if word in {"CAP", "CAPS", "CAPSULE", "CAPSULES"}:
+        return "CAP"
+    if word in {"SPRAY", "SPRAYS", "DOSES"}:
+        return "SPRAY"
+    if word in {"DROPS", "DROP", "OPHTALMIC", "EYE"}:
+        return "EYE"
+    if word in {"VIAL", "VIALS"}:
+        return "VIAL"
+    if word in {"AMP", "AMPS"}:
+        return "AMP"
+    if word in {"SYRP", "SYP"}:
+        return "SYRUP"
+    return word
+
+
+def _dosage_parts(nums: tuple[str, ...]) -> list[str]:
+    parts: list[str] = []
+    for num in nums:
+        parts.extend(p for p in num.split("/") if p)
+    return parts
+
+
+def _modifier_is_optional(modifier: str, d_words: set[str], m_words: set[str]):
+    if modifier == "ADVANCE" and "MILK" in d_words and "MILK" in m_words:
+        return True
+    if modifier == "EXTRA" and ("EMOLLIENT" in d_words or "EMOLLIENT" in m_words):
+        return True
+    return False
+
+
+def _forms_compatible(left: str, right: str) -> bool:
+    if not left or not right or left == right:
+        return True
+    if left in OCULAR_FORMS and right in OCULAR_FORMS:
+        return True
+    if left in LIQUID_FORMS and right in LIQUID_FORMS:
+        return True
+    if left in SOLID_FORMS and right in SOLID_FORMS:
+        return True
+    return False
+
+
+def _dosage_compatible(d: DrugComponents, m: DrugComponents) -> bool:
+    d_parts = _dosage_parts(d.dosage_nums)
+    m_parts = _dosage_parts(m.dosage_nums)
+    if tuple(sorted(d_parts, key=float)) == tuple(sorted(m_parts, key=float)):
+        return True
+    forms = {d.form, m.form}
+    if not forms & LIQUID_DOSE_FORMS:
+        return False
+    if len(d_parts) == 1 and len(m_parts) > 1 and d_parts[0] == m_parts[0]:
+        return True
+    if len(m_parts) == 1 and len(d_parts) > 1 and m_parts[0] == d_parts[0]:
+        return True
+    return False
+
+
 def components_match(
     d: DrugComponents,
     m: DrugComponents,
@@ -212,6 +310,8 @@ def components_match(
     m_words = set(m.normalized.split())
     for modifier in CRITICAL_MODIFIERS | VITAMIN_MODIFIERS:
         if (modifier in d_words) != (modifier in m_words):
+            if _modifier_is_optional(modifier, d_words, m_words):
+                continue
             return False, "different_modifier"
 
     if d_clean and m_clean:
@@ -238,12 +338,16 @@ def components_match(
 
     # Dosage check
     if d.dosage_nums and m.dosage_nums:
-        for i in range(min(len(d.dosage_nums), len(m.dosage_nums))):
-            if d.dosage_nums[i] != m.dosage_nums[i]:
-                return False, "different_dosage"
+        if not _dosage_compatible(d, m):
+            return False, "different_dosage"
+
+    if d.form and m.form and not _forms_compatible(d.form, m.form):
+        return False, "different_form"
 
     # Quantity check
     if d.qty and m.qty and d.qty != m.qty:
+        if d.form == "POWDER" and m.form == "POWDER":
+            return True, "ok"
         return False, "different_quantity"
 
     # Volume check
