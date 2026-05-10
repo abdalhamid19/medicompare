@@ -81,6 +81,48 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(cleaned.at[0, "verified"], "cleanup_rejected")
         self.assertEqual(cleaned.at[0, "match_method"], "post_cleanup")
 
+    def test_pipeline_passes_price_signal_to_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            drugs_path = tmp_path / "drugs.csv"
+            tawreed_path = tmp_path / "tawreed.csv"
+
+            pd.DataFrame(
+                [
+                    {
+                        "كود": "D-1",
+                        "إسم الصنف": "PRICECID 10MG 30TAB",
+                        "سعر البيع": "40",
+                    },
+                ]
+            ).to_csv(drugs_path, index=False, encoding="utf-8-sig")
+
+            pd.DataFrame(
+                [
+                    {
+                        "product_name_ar": "مرشح ارخص",
+                        "product_name_en": "PRICECID 10 MG 30 TAB SMALL PACK",
+                        "store_product_id": "wrong-price",
+                        "product_id": "P-1",
+                        "sale_price": "30",
+                    },
+                    {
+                        "product_name_ar": "مرشح السعر",
+                        "product_name_en": "PRICECID 10 MG 30 TAB LARGE PACK",
+                        "store_product_id": "right-price",
+                        "product_id": "P-2",
+                        "sale_price": "40",
+                    },
+                ]
+            ).to_csv(tawreed_path, index=False, encoding="utf-8-sig")
+
+            pipeline = MatchPipeline(cfg=MatchingConfig(fuzzy_threshold=65), api_cfg=None)
+            pipeline.load_data(str(drugs_path), str(tawreed_path))
+            results = pipeline.run_matching()
+
+            row = results.iloc[0]
+            self.assertEqual(row["matched_store_product_id"], "right-price")
+
 
 if __name__ == "__main__":
     unittest.main()

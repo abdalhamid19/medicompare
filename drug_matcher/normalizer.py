@@ -59,6 +59,7 @@ PEDIATRIC_WORDS = frozenset({
 INFUSION_CONTEXT_WORDS = frozenset({
     "I", "V", "IV", "I/V", "INJ", "INJECTION", "INFUSION", "VIAL", "AMP", "AMPS",
 })
+ROUTE_WORDS = frozenset({"IM", "IV", "SC"})
 FORM_SCAN_ORDER = (
     "VIAL", "VIALS", "AMP", "AMPS", "SPRAY", "SPRAYS", "SYRUP", "SYRP",
     "SYP", "SUSP",
@@ -289,6 +290,17 @@ def _has_pediatric_signal(words: set[str]) -> bool:
     return not bool(words & INFUSION_CONTEXT_WORDS)
 
 
+def _route_signals(words: set[str]) -> frozenset[str]:
+    routes = set(words & ROUTE_WORDS)
+    if {"I", "M"} <= words:
+        routes.add("IM")
+    if {"I", "V"} <= words:
+        routes.add("IV")
+    if {"S", "C"} <= words:
+        routes.add("SC")
+    return frozenset(routes)
+
+
 def _forms_compatible(left: str, right: str) -> bool:
     if not left or not right or left == right:
         return True
@@ -368,6 +380,11 @@ def components_match(
 
     if d.form and m.form and not _forms_compatible(d.form, m.form):
         return False, "different_form"
+
+    d_routes = _route_signals(d_words)
+    m_routes = _route_signals(m_words)
+    if d_routes and m_routes and d_routes.isdisjoint(m_routes):
+        return False, "different_route"
 
     # Quantity check
     if d.qty and m.qty and d.qty != m.qty:

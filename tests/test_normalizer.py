@@ -91,6 +91,7 @@ class NormalizerTests(unittest.TestCase):
             ("CALCIUM D3 30 TAB", "CALCIUM 30 TAB", "different_modifier"),
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB", "different_import_status"),
             ("ASPOCID INF 30TAB", "ASPOCID 75 MG 30 TAB", "different_age_group"),
+            ("CEFTRIAXONE 1 GM I.M. VIAL", "CEFTRIAXONE 1 GM I.V. VIAL", "different_route"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):
@@ -107,6 +108,7 @@ class NormalizerTests(unittest.TestCase):
             ("ALLERBAN SYRUP 120ML", "ALLERBAN 1 MG / 5 ML SYRUP 100 ML"),
             ("AMIKACIN 500MG VIAL", "AMIKACIN AMOUN 500 MG / 2 ML VIAL"),
             ("ASPOCID INF 30TAB", "ASPOCID PAEDIATRIC 75 MG 30 CHEWABLE TAB"),
+            ("CEFTRIAXONE 1 GM I.M. VIAL", "CEFTRIAXONE 1 GM I.M / I.V VIAL"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

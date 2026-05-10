@@ -56,14 +56,14 @@ class MatchPipeline:
         paths = Paths()
         drugs_path = drugs_path or paths.drugs_csv
         tawreed_path = tawreed_path or paths.tawreed_csv
-        drugs = pd.read_csv(
-            drugs_path, encoding="utf-8-sig",
-            dtype=str, usecols=[0, 1],
-        )
+        drugs_raw = pd.read_csv(drugs_path, encoding="utf-8-sig", dtype=str)
+        drugs = drugs_raw.iloc[:, [0, 1]].copy()
         drugs.columns = ["code", "drug_name"]
+        drugs["drug_price"] = (
+            drugs_raw.iloc[:, 2] if drugs_raw.shape[1] > 2 else ""
+        )
         tawreed = pd.read_csv(
-            tawreed_path, encoding="utf-8-sig",
-            dtype=str, usecols=[0, 1, 2],
+            tawreed_path, encoding="utf-8-sig", dtype=str,
         )
         if self._limit:
             drugs = drugs.head(self._limit)
@@ -103,11 +103,12 @@ class MatchPipeline:
     def _match_one(self, row, stats):
         """Match one drug, with trace if enabled."""
         drug_name = str(row.drug_name)
+        price = getattr(row, "drug_price", None)
         if not self._trace or not self._trace.enabled:
-            return self._index.best_match(drug_name)
+            return self._index.best_match(drug_name, price)
         code = str(row.code)
         rec, score, method, trace = (
-            self._index.best_match_detailed(drug_name)
+            self._index.best_match_detailed(drug_name, price)
         )
         parsed = parse_drug(drug_name)
         self._trace.log_normalization(

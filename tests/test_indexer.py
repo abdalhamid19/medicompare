@@ -285,6 +285,52 @@ class DrugIndexTests(unittest.TestCase):
         self.assertEqual(method, "component_index")
         self.assertGreaterEqual(score, 65)
 
+    def test_price_signal_breaks_equivalent_candidate_tie(self) -> None:
+        tawreed = pd.DataFrame(
+            [
+                {
+                    "product_name_ar": "مرشح ارخص",
+                    "product_name_en": "PRICECID 10 MG 30 TAB SMALL PACK",
+                    "store_product_id": "wrong-price",
+                    "sale_price": "30",
+                },
+                {
+                    "product_name_ar": "مرشح السعر",
+                    "product_name_en": "PRICECID 10 MG 30 TAB LARGE PACK",
+                    "store_product_id": "right-price",
+                    "sale_price": "40",
+                },
+            ],
+        )
+        index = DrugIndex(tawreed, MatchingConfig(fuzzy_threshold=65))
+
+        record, score, method = index.best_match("PRICECID 10MG 30TAB", price="40")
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["store_product_id"], "right-price")
+        self.assertEqual(method, "component_index")
+        self.assertEqual(score, 100.0)
+
+    def test_matching_price_does_not_override_component_rejection(self) -> None:
+        tawreed = pd.DataFrame(
+            [
+                {
+                    "product_name_ar": "اميكاسين بخاخ",
+                    "product_name_en": "AMIKACIN SPRAY 100 ML",
+                    "store_product_id": "1503239",
+                    "sale_price": "34",
+                },
+            ],
+        )
+        index = DrugIndex(tawreed, MatchingConfig(fuzzy_threshold=65))
+
+        record, score, method = index.best_match("AMIKACIN 500MG VIAL", price="34")
+
+        self.assertIsNone(record)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(method, "no_match")
+
     def test_reported_false_negatives_are_matched(self) -> None:
         index = make_reported_errors_index(threshold=65)
         cases = [
