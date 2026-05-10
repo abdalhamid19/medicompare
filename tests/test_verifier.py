@@ -31,10 +31,12 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_prompt_contains_negative_matching_rules(self) -> None:
-        self.assertIn("PLUS", SYSTEM_PROMPT)
-        self.assertIn("DOSAGE", SYSTEM_PROMPT)
-        self.assertIn("QUANTITY", SYSTEM_PROMPT)
-        self.assertIn("WRONG", SYSTEM_PROMPT)
+        prompt = SYSTEM_PROMPT.upper()
+        self.assertIn("PLUS", prompt)
+        self.assertIn("DOSAGE", prompt)
+        self.assertIn("QUANTITY", prompt)
+        self.assertIn("B12", prompt)
+        self.assertIn("FLAVOR", prompt)
 
 
 if __name__ == "__main__":

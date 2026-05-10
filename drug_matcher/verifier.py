@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -11,7 +12,7 @@ from .config import APIConfig
 
 logger = logging.getLogger("medicompare")
 
-SYSTEM_PROMPT = """You are a pharmaceutical product matching expert. Your job is to verify if two drug names refer to the EXACT SAME product.
+DEFAULT_SYSTEM_PROMPT = """You are a pharmaceutical product matching expert. Your job is to verify if two drug names refer to the EXACT SAME product.
 
 STRICT Rules - if ANY of these fail, the match is WRONG:
 1. BRAND NAME must be identical (e.g. "PANADOL" = "PANADOL", but "PANADOL" ≠ "PANADOL EXTRA", "VIGOTON PLUS" ≠ "VIGOTON")
@@ -41,6 +42,19 @@ NEVER return confidence = 0.0 unless you are completely uncertain.
 Respond in JSON only (ALL three fields are MANDATORY):
 {"is_correct": true/false, "reason": "brief explanation", "confidence": 0.0-1.0}
 """
+
+
+def _load_system_prompt() -> str:
+    """Load the editable AI prompt, falling back to the built-in prompt."""
+    prompt_path = Path(__file__).resolve().parent.parent / "prompt_for_ai.md"
+    try:
+        text = prompt_path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return DEFAULT_SYSTEM_PROMPT
+    return text or DEFAULT_SYSTEM_PROMPT
+
+
+SYSTEM_PROMPT = _load_system_prompt()
 
 VERIFY_PROMPT = """Verify this drug match:
 
