@@ -78,13 +78,22 @@ class DrugIndexTests(unittest.TestCase):
     def test_best_match_handles_compact_dosage_and_quantity(self) -> None:
         index = make_index()
 
-        record, score, method = index.best_match("+***IMP AUGMENTIN625MG 10TABS")
+        record, score, method = index.best_match("+*** AUGMENTIN625MG 10TABS")
 
         self.assertIsNotNone(record)
         assert record is not None
         self.assertEqual(record["store_product_id"], "T-1")
         self.assertGreaterEqual(score, 70)
         self.assertIn(method, {"brand_index", "token_set_ratio", "token_sort_ratio", "partial_token_sort_ratio"})
+
+    def test_best_match_rejects_import_status_mismatch(self) -> None:
+        index = make_index(threshold=65)
+
+        record, score, method = index.best_match("+***IMP AUGMENTIN625MG 10TABS")
+
+        self.assertIsNone(record)
+        self.assertEqual(score, 0.0)
+        self.assertEqual(method, "no_match")
 
     def test_best_match_rejects_quantity_mismatch_even_when_brand_matches(self) -> None:
         index = make_index(threshold=65)

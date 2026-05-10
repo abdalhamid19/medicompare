@@ -37,6 +37,7 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("QUANTITY", prompt)
         self.assertIn("B12", prompt)
         self.assertIn("FLAVOR", prompt)
+        self.assertIn("IMPORTED", prompt)
 
 
 if __name__ == "__main__":

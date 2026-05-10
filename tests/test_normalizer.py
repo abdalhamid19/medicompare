@@ -29,7 +29,13 @@ class NormalizerTests(unittest.TestCase):
         self.assertEqual(comp.dosage_nums, ("625",))
         self.assertEqual(comp.dosage_units, ("MG",))
         self.assertEqual(comp.qty, "10")
+        self.assertTrue(comp.imported)
         self.assertEqual(comp.normalized, "AUGMENTIN 625 MG 10 TABS")
+
+    def test_parse_drug_detects_compact_import_prefix(self) -> None:
+        comp = parse_drug("+***IMPGlUCOSAMINE CHONDROTN MSM 120CAP")
+
+        self.assertTrue(comp.imported)
 
     def test_parse_drug_separates_packaging_weight_from_dosage(self) -> None:
         comp = parse_drug("PRODUCT 500 MG 30 TAB 20 GM")
@@ -47,6 +53,7 @@ class NormalizerTests(unittest.TestCase):
             ("TOTAL COD LIVER OIL 120 ML SYP", "TOTAL SYRUP 120 ML", "different_brand"),
             ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN 30 CAPS", "different_modifier"),
             ("CALCIUM D3 30 TAB", "CALCIUM 30 TAB", "different_modifier"),
+            ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB", "different_import_status"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):
@@ -59,7 +66,7 @@ class NormalizerTests(unittest.TestCase):
             ("AUGMENTIN 625MG 10 TABS", "AUGMENTIN 625 MG 10 F.C. TAB."),
             ("INDERAL 10 MG 50TAB", "INDERAL 10 MG 50 TABS"),
             ("PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TABLETS"),
-            ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB"),
+            ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB IMP"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

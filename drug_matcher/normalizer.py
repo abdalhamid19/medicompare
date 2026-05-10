@@ -28,7 +28,7 @@ FORM_PREFIXES = frozenset({
 
 NOISE_WORDS = frozenset({
     "BLUE", "RED", "WHITE", "ORS", "FLAVOR", "FLAVOUR",
-    "LIQUID", "FACIAL", "IMP", "IMPORTED",
+    "LIQUID", "FACIAL",
 })
 BRAND_QUALIFIERS = frozenset({"INFINITY", "SURACTIVE"})
 FLAVOR_WORDS = frozenset({
@@ -52,6 +52,7 @@ class DrugComponents:
     weight: str
     form: str
     flavor: str
+    imported: bool
     normalized: str
 
 _DOSAGE_RE = re.compile(
@@ -68,6 +69,10 @@ _QTY_RE = re.compile(
 )
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
 _NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*(IMP|IMPORTED)?\s*", re.IGNORECASE)
+_IMPORT_MARKER_RE = re.compile(
+    r"(^[+*.]+\s*(IMP|IMPORTED))|\b(IMP|IMPORTED)\b",
+    re.IGNORECASE,
+)
 
 def normalize(name: str) -> str:
     if not name or not isinstance(name, str):
@@ -91,8 +96,9 @@ def normalize(name: str) -> str:
 
 def parse_drug(name: str) -> DrugComponents:
     if not name or not isinstance(name, str):
-        return DrugComponents("", (), (), "", "", "", "", "", "")
+        return DrugComponents("", (), (), "", "", "", "", "", False, "")
 
+    imported = bool(_IMPORT_MARKER_RE.search(name))
     norm = normalize(name)
 
     # Dosage (MG, MCG, IU, %) - NOT GM/G (those are weight/packaging)
@@ -159,6 +165,7 @@ def parse_drug(name: str) -> DrugComponents:
         weight=weight,
         form=form,
         flavor=flavor,
+        imported=imported,
         normalized=norm,
     )
 
@@ -171,6 +178,9 @@ def components_match(
     # Brand check
     d_clean = re.sub(r"[^A-Z0-9]", "", d.brand)
     m_clean = re.sub(r"[^A-Z0-9]", "", m.brand)
+
+    if d.imported != m.imported:
+        return False, "different_import_status"
 
     d_words = set(d.normalized.split())
     m_words = set(m.normalized.split())

@@ -13,7 +13,8 @@ Strict rejection rules:
    strawberry are different products.
 6. Product variants must match. Reject if one side has PLUS, EXTRA, FORTE,
    NIGHT, COLD, SINUS, D, B12, or D3 and the other side does not.
-7. Import markers such as IMP or IMPORTED are not product variants.
+7. Import markers such as IMP or IMPORTED are product variants. Reject if one
+   side is imported and the other side is local/non-imported.
 
 Allowed differences:
 

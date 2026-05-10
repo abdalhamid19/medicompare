@@ -20,7 +20,7 @@ class PipelineTests(unittest.TestCase):
 
             pd.DataFrame(
                 [
-                    {"كود": "D-1", "إسم الصنف": "+***IMP AUGMENTIN625MG 10TABS"},
+                    {"كود": "D-1", "إسم الصنف": "+*** AUGMENTIN625MG 10TABS"},
                     {"كود": "D-2", "إسم الصنف": "UNKNOWN PRODUCT 20 TAB"},
                 ]
             ).to_csv(drugs_path, index=False, encoding="utf-8-sig")
