@@ -277,13 +277,20 @@ class DrugIndex:
         trace = {
             "norm": norm, "brand": parsed.brand,
             "brand_hits": [], "fuzzy_steps": [],
-            "component_checks": [],
+            "component_checks": [], "candidates": [],
+            "score_breakdowns": [],
         }
         if not norm or len(norm) < 3:
             return None, 0.0, "too_short", trace
         if not parsed.brand:
             return None, 0.0, "invalid_name", trace
         component_hits = self._component_lookup(parsed, query_price)
+        trace["candidates"].extend(
+            self._candidate_events("component_index", component_hits),
+        )
+        trace["score_breakdowns"].extend(
+            self._score_events("component_index", component_hits, query_price),
+        )
         if component_hits:
             best_idx, best_score = max(component_hits, key=lambda x: x[1])
             if best_score >= self._cfg.fuzzy_threshold:
@@ -300,6 +307,10 @@ class DrugIndex:
                     )
         hits = self._brand_lookup(parsed, query_price)
         trace["brand_hits"] = hits
+        trace["candidates"].extend(self._candidate_events("brand_index", hits))
+        trace["score_breakdowns"].extend(
+            self._score_events("brand_index", hits, query_price),
+        )
         if hits:
             best_idx, best_score = max(hits, key=lambda x: x[1])
             if best_score >= self._cfg.fuzzy_threshold:
@@ -326,6 +337,18 @@ class DrugIndex:
             )
             if result:
                 _, score, idx = result
+                price_bonus = self._price_bonus(query_price, idx)
+                trace["candidates"].append({
+                    "idx": idx, "source": scorer.__name__,
+                    "rank": 1, "score": score,
+                })
+                trace["score_breakdowns"].append({
+                    "idx": idx, "source": scorer.__name__,
+                    "rank": 1, "base_score": score,
+                    "price_bonus": price_bonus,
+                    "final_score": score + price_bonus,
+                    "threshold": self._cfg.fuzzy_threshold,
+                })
                 ok, reason = components_match(
                     parsed, self._parsed[idx],
                     self._cfg.brand_prefix_min,
@@ -334,12 +357,31 @@ class DrugIndex:
                     (idx, ok, reason),
                 )
                 if ok:
-                    score += self._price_bonus(query_price, idx)
+                    score += price_bonus
                     return (
                         self.get_record(idx), self._display_score(score),
                         scorer.__name__, trace,
                     )
         return None, 0.0, "no_match", trace
+
+    def _candidate_events(self, source, hits):
+        return [
+            {"idx": idx, "source": source, "rank": rank, "score": score}
+            for rank, (idx, score) in enumerate(hits[:5], start=1)
+        ]
+
+    def _score_events(self, source, hits, query_price):
+        events = []
+        for rank, (idx, score) in enumerate(hits[:5], start=1):
+            price_bonus = self._price_bonus(query_price, idx)
+            events.append({
+                "idx": idx, "source": source, "rank": rank,
+                "base_score": score - price_bonus,
+                "price_bonus": price_bonus,
+                "final_score": score,
+                "threshold": self._cfg.fuzzy_threshold,
+            })
+        return events
 
     def _try_brand_match(self, parsed, norm, query_price=None):
         hits = self._brand_lookup(parsed, query_price)

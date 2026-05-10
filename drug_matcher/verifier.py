@@ -240,9 +240,10 @@ class AIVerifier:
             close_session = True
         model = payload.get("model", self._cfg.model)
         plan = self._build_attempt_plan(model)
+        attempts = []
 
         try:
-            for key, mdl in plan:
+            for plan_idx, (key, mdl) in enumerate(plan):
                 payload["model"] = mdl
                 headers = dict(self._session.headers)
                 headers["Authorization"] = f"Bearer {key}"
@@ -256,6 +257,20 @@ class AIVerifier:
                                 headers=headers,
                             ) as resp:
                                 if resp.status == 429 and attempt < max_retries:
+                                    attempts.append({
+                                        "attempt": attempt + 1,
+                                        "key_suffix": key[-6:],
+                                        "model": mdl,
+                                        "status": resp.status,
+                                        "fallback_used": plan_idx > 0,
+                                        "decision": "retry",
+                                        "error_stage": "api",
+                                        "error_code": "rate_limited",
+                                        "reason": (
+                                            f"429 retry_after="
+                                            f"{resp.headers.get('Retry-After', '10')}"
+                                        ),
+                                    })
                                     retry_after = int(
                                         resp.headers.get("Retry-After", "10"),
                                     )
@@ -263,6 +278,17 @@ class AIVerifier:
                                     continue
                                 if resp.status != 200:
                                     text = await resp.text()
+                                    attempts.append({
+                                        "attempt": attempt + 1,
+                                        "key_suffix": key[-6:],
+                                        "model": mdl,
+                                        "status": resp.status,
+                                        "fallback_used": plan_idx > 0,
+                                        "decision": "failed",
+                                        "error_stage": "api",
+                                        "error_code": f"http_{resp.status}",
+                                        "reason": text[:200],
+                                    })
                                     log_msg = (
                                         f"API error {resp.status} "
                                         f"with model={mdl} key=...{key[-6:]}"
@@ -277,13 +303,36 @@ class AIVerifier:
                                 content = data["choices"][0]["message"]["content"]
                                 result = _extract_json(content)
                                 if result is None:
+                                    attempts.append({
+                                        "attempt": attempt + 1,
+                                        "key_suffix": key[-6:],
+                                        "model": mdl,
+                                        "status": 200,
+                                        "fallback_used": plan_idx > 0,
+                                        "decision": "parse_failed",
+                                        "error_stage": "ai_parse",
+                                        "error_code": "invalid_json",
+                                        "parse_failed": True,
+                                        "reason": content[:200],
+                                    })
                                     logger.warning(
                                         "  ⚠ invalid JSON from model=%s",
                                         mdl,
                                     )
-                                    return _fallback_from_unparseable_response(
+                                    parsed = _fallback_from_unparseable_response(
                                         content, mdl,
                                     )
+                                    parsed["_api_attempts"] = attempts
+                                    return parsed
+                                attempts.append({
+                                    "attempt": attempt + 1,
+                                    "key_suffix": key[-6:],
+                                    "model": mdl,
+                                    "status": 200,
+                                    "fallback_used": plan_idx > 0,
+                                    "decision": "success",
+                                    "reason": "parsed_json",
+                                })
                                 confidence = float(result.get("confidence", 0.0))
                                 if confidence == 0.0:
                                     is_correct = bool(result.get("is_correct", False))
@@ -295,11 +344,34 @@ class AIVerifier:
                                     "confidence": confidence,
                                     "model_used": mdl,
                                     "_raw": result,
+                                    "_api_attempts": attempts,
                                 }
                         except Exception as e:
                             if attempt < max_retries:
+                                attempts.append({
+                                    "attempt": attempt + 1,
+                                    "key_suffix": key[-6:],
+                                    "model": mdl,
+                                    "status": "exception",
+                                    "fallback_used": plan_idx > 0,
+                                    "decision": "retry",
+                                    "error_stage": "api",
+                                    "error_code": type(e).__name__,
+                                    "reason": str(e)[:200],
+                                })
                                 await asyncio.sleep(2 + attempt * 2)
                                 continue
+                            attempts.append({
+                                "attempt": attempt + 1,
+                                "key_suffix": key[-6:],
+                                "model": mdl,
+                                "status": "exception",
+                                "fallback_used": plan_idx > 0,
+                                "decision": "failed",
+                                "error_stage": "api",
+                                "error_code": type(e).__name__,
+                                "reason": str(e)[:200],
+                            })
                             log_msg = (
                                 f"Exception {type(e).__name__} "
                                 f"with model={mdl} key=...{key[-6:]}"
@@ -443,6 +515,8 @@ class AIVerifier:
                 "reason": str(result.get("reason", "invalid_json")),
                 "confidence": min(float(result.get("confidence", 0.0)), 0.5),
                 "parse_failed": True,
+                "model_used": result.get("model_used", ""),
+                "_api_attempts": result.get("_api_attempts", []),
             }
 
         if api_failed:
@@ -451,12 +525,16 @@ class AIVerifier:
                 "is_correct": bool(result.get("is_correct", True)),
                 "reason": str(result.get("reason", "")),
                 "confidence": float(result.get("confidence", first_confidence)),
+                "model_used": result.get("model_used", ""),
+                "_api_attempts": result.get("_api_attempts", []),
             }
         agree = bool(result.get("agree", True))
         return {
             "is_correct": agree if first_decision == "ai_confirmed" else not agree,
             "reason": str(result.get("reason", "")),
             "confidence": float(result.get("confidence", first_confidence)),
+            "model_used": result.get("model_used", ""),
+            "_api_attempts": result.get("_api_attempts", []),
         }
 
     async def review_batch(
@@ -531,5 +609,17 @@ class AIVerifier:
                 "score": candidates[best_idx - 1][1],
                 "reason": result.get("reason", ""),
                 "confidence": float(result.get("confidence", 0.0)),
+                "model_used": result.get("model_used", ""),
+                "_api_attempts": result.get("_api_attempts", []),
+                "best_index": best_idx,
+                "parse_failed": result.get("parse_failed", False),
             }
-        return {"record": None, "score": 0.0, "reason": result.get("reason", "none"), "confidence": float(result.get("confidence", 0.0))}
+        return {
+            "record": None, "score": 0.0,
+            "reason": result.get("reason", "none"),
+            "confidence": float(result.get("confidence", 0.0)),
+            "model_used": result.get("model_used", ""),
+            "_api_attempts": result.get("_api_attempts", []),
+            "best_index": best_idx,
+            "parse_failed": result.get("parse_failed", False),
+        }

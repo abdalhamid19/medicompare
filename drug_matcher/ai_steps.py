@@ -26,6 +26,26 @@ def _set_internal_matched_price(results: pd.DataFrame, idx, value):
     results.at[idx, "_matched_price"] = value
 
 
+def _trace_api_attempts(trace, results, idx, parsed, item):
+    if trace and trace.enabled:
+        trace.log_api_attempts(
+            results.at[idx, "code"], results.at[idx, "drug_name"],
+            parsed.normalized, parsed.brand,
+            item.get("_api_attempts", []), row_index=idx,
+        )
+
+
+def _trace_parse_failure(trace, results, idx, parsed, item):
+    if trace and trace.enabled and item.get("parse_failed"):
+        trace.log_ai_parse_failure(
+            results.at[idx, "code"], results.at[idx, "drug_name"],
+            parsed.normalized, parsed.brand,
+            item.get("reason", ""),
+            model_used=item.get("model_used", ""),
+            row_index=idx,
+        )
+
+
 async def run_ai_verification(
     results: pd.DataFrame,
     index: DrugIndex,
@@ -62,6 +82,7 @@ async def run_ai_verification(
                     row.get("_drug_price", ""),
                     row.get("_matched_price", ""),
                 ),
+                row_index=idx,
             )
     items = _build_verify_items(to_verify)
     async with AIVerifier(
@@ -117,6 +138,7 @@ async def run_ai_review(
                     row.get("_drug_price", ""),
                     row.get("_matched_price", ""),
                 ),
+                row_index=idx,
             )
     items = _build_review_items(to_review)
     async with AIVerifier(
@@ -215,6 +237,7 @@ async def _apply_verification(
             continue
         drug_name = results.at[idx, "drug_name"]
         parsed = parse_drug(drug_name)
+        _trace_api_attempts(trace, results, idx, parsed, vr)
         if not vr["is_correct"]:
             c, r = await _handle_rejected(
                 verifier, results, index, idx, cfg, trace, vr,
@@ -239,7 +262,10 @@ async def _apply_verification(
                     "",
                     model_used=vr.get("model_used", ""),
                     api_failures=verifier.get_fallback_log(),
+                    row_index=idx,
+                    parse_failed=vr.get("parse_failed", False),
                 )
+                _trace_parse_failure(trace, results, idx, parsed, vr)
     return rejected, corrected
 
 
@@ -276,7 +302,11 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
                     rec["product_name_en"],
                     model_used=ai_result.get("model_used", ""),
                     api_failures=verifier.get_fallback_log(),
+                    row_index=idx,
+                    parse_failed=ai_result.get("parse_failed", False),
                 )
+                _trace_api_attempts(trace, results, idx, parsed, ai_result)
+                _trace_parse_failure(trace, results, idx, parsed, ai_result)
             return 1, 0
     _clear_match(results, idx)
     results.at[idx, "verified"] = "ai_rejected"
@@ -293,7 +323,10 @@ async def _handle_rejected(verifier, results, index, idx, cfg, trace, vr):
             "",
             model_used=vr.get("model_used", ""),
             api_failures=verifier.get_fallback_log(),
+            row_index=idx,
+            parse_failed=vr.get("parse_failed", False),
         )
+        _trace_parse_failure(trace, results, idx, parsed, vr)
     return 0, 1
 
 
@@ -352,6 +385,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             trace.log_ai_skip(
                 code, drug_name, norm, parsed.brand,
                 "search", "norm too short for AI search",
+                row_index=row.name,
             )
         return 0
     price = row.get("_drug_price", "")
@@ -361,6 +395,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             trace.log_ai_skip(
                 code, drug_name, norm, parsed.brand,
                 "search", "no valid candidates found",
+                row_index=row.name,
             )
         return 0
     if trace and trace.enabled:
@@ -372,10 +407,14 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             len(candidates), cand_names,
             ai_model=verifier._cfg.model,
             price_context=price_context(price, None),
+            row_index=row.name,
         )
     ai_result = await verifier.find_better_match(
         drug_name, candidates, inventory_price=price,
     )
+    if ai_result:
+        _trace_api_attempts(trace, results, row.name, parsed, ai_result)
+        _trace_parse_failure(trace, results, row.name, parsed, ai_result)
     confidence = ai_result.get("confidence", 0) if ai_result else 0
     if (
         ai_result and ai_result.get("record")
@@ -390,17 +429,35 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 model_used=ai_result.get("model_used", ""),
                 api_failures=verifier.get_fallback_log(),
                 accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
+                row_index=row.name,
+                parse_failed=ai_result.get("parse_failed", False),
             )
         return 1
     if trace and trace.enabled:
+        error_code = _search_error_code(ai_result, confidence)
         trace.log_ai_search_result(
             code, drug_name, norm, parsed.brand,
             False, None, confidence,
             model_used=ai_result.get("model_used", "") if ai_result else "",
             api_failures=verifier.get_fallback_log(),
             accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
+            row_index=row.name,
+            error_code=error_code,
+            parse_failed=ai_result.get("parse_failed", False) if ai_result else False,
         )
     return 0
+
+
+def _search_error_code(ai_result, confidence) -> str:
+    if not ai_result:
+        return "no_ai_result"
+    if ai_result.get("parse_failed"):
+        return "invalid_json"
+    if ai_result.get("best_index", 0) == 0:
+        return "best_index_0"
+    if confidence < _AI_SEARCH_ACCEPT_CONFIDENCE:
+        return "confidence_below_threshold"
+    return "no_record"
 
 
 def _search_candidates(parsed, norm, index, cfg, price=None):
@@ -462,7 +519,7 @@ def _trace_skip_all_verify(results, trace, reason):
         trace.log_ai_skip(
             row["code"], row["drug_name"],
             parsed.normalized, parsed.brand,
-            "verify", reason,
+            "verify", reason, row_index=idx,
         )
 
 
@@ -477,7 +534,7 @@ def _trace_skip_all_search(results, trace, reason):
         trace.log_ai_skip(
             row["code"], row["drug_name"],
             parsed.normalized, parsed.brand,
-            "search", reason,
+            "search", reason, row_index=idx,
         )
 
 
@@ -563,6 +620,8 @@ async def _apply_review_results(
         review_reason = rr.get("reason", "")
         is_correct = rr.get("is_correct", True)
         is_api_failed = rr.get("api_failed", False)
+        _trace_api_attempts(trace, results, idx, parsed, rr)
+        _trace_parse_failure(trace, results, idx, parsed, rr)
 
         if is_api_failed:
             # First AI never made a real decision — second model's result is the primary decision
@@ -579,6 +638,8 @@ async def _apply_review_results(
                         "ai_confirmed (fresh verify by review model)",
                         review_model=verifier._cfg.review_model,
                         api_failures=verifier.get_fallback_log(),
+                        row_index=idx,
+                        parse_failed=rr.get("parse_failed", False),
                     )
             else:
                 # Second model says this is NOT a correct match
@@ -595,6 +656,8 @@ async def _apply_review_results(
                         "ai_review_rejected (fresh verify by review model)",
                         review_model=verifier._cfg.review_model,
                         api_failures=verifier.get_fallback_log(),
+                        row_index=idx,
+                        parse_failed=rr.get("parse_failed", False),
                     )
         elif is_correct:
             # Second model agrees with first AI
@@ -608,6 +671,8 @@ async def _apply_review_results(
                     f"{first_decision}_reviewed",
                     review_model=verifier._cfg.review_model,
                     api_failures=verifier.get_fallback_log(),
+                    row_index=idx,
+                    parse_failed=rr.get("parse_failed", False),
                 )
         else:
             # Second model disagrees with first AI
@@ -621,6 +686,8 @@ async def _apply_review_results(
                         f"{first_decision}_kept_low_confidence_review",
                         review_model=verifier._cfg.review_model,
                         api_failures=verifier.get_fallback_log(),
+                        row_index=idx,
+                        parse_failed=rr.get("parse_failed", False),
                     )
                 continue
             overridden += 1
@@ -648,6 +715,9 @@ async def _apply_review_results(
                             results, idx, "_drug_price",
                         ),
                     )
+                    if ai_result:
+                        _trace_api_attempts(trace, results, idx, parsed, ai_result)
+                        _trace_parse_failure(trace, results, idx, parsed, ai_result)
                     if ai_result and ai_result.get("record"):
                         _apply_correction(results, idx, ai_result)
                         results.at[idx, "verified"] = "ai_review_corrected"
@@ -667,6 +737,8 @@ async def _apply_review_results(
                     results.at[idx, "verified"],
                     review_model=verifier._cfg.review_model,
                     api_failures=verifier.get_fallback_log(),
+                    row_index=idx,
+                    parse_failed=rr.get("parse_failed", False),
                 )
     return overridden
 
@@ -681,5 +753,5 @@ def _trace_skip_all_review(results, trace, reason):
         trace.log_ai_skip(
             row["code"], row["drug_name"],
             parsed.normalized, parsed.brand,
-            "review", reason,
+            "review", reason, row_index=idx,
         )

@@ -88,8 +88,8 @@ class MatchPipeline:
         self._require_data()
         results = []
         stats = {"brand_index": 0, "fuzzy": 0, "no_match": 0}
-        for row in self._drugs_df.itertuples(index=False):
-            rec, score, method = self._match_one(row, stats)
+        for row_index, row in enumerate(self._drugs_df.itertuples(index=False)):
+            rec, score, method = self._match_one(row, stats, row_index)
             results.append(self._make_row(row, rec, score, method, stats))
         self._results = pd.DataFrame(results)
         # Allow mixed str/float in numeric-optional columns
@@ -100,7 +100,7 @@ class MatchPipeline:
         self._log_match_counts()
         return self._results
 
-    def _match_one(self, row, stats):
+    def _match_one(self, row, stats, row_index=""):
         """Match one drug, with trace if enabled."""
         drug_name = str(row.drug_name)
         price = getattr(row, "drug_price", None)
@@ -114,23 +114,38 @@ class MatchPipeline:
         self._trace.log_normalization(
             code, drug_name, trace["norm"], trace["brand"],
             parsed.dosage_nums, parsed.form,
+            row_index=row_index,
+            components=self._trace.components_text(parsed),
         )
+        for item in trace.get("candidates", []):
+            self._trace.log_candidate_generated(
+                code, drug_name, trace["norm"], trace["brand"],
+                item["idx"], self._index, item["source"],
+                item.get("rank", ""), item.get("score", ""),
+                row_index=row_index,
+            )
+        for item in trace.get("score_breakdowns", []):
+            self._trace.log_score_breakdown(
+                code, drug_name, trace["norm"], trace["brand"],
+                item, self._index, row_index=row_index,
+            )
         self._trace.log_brand_lookup(
             code, drug_name, trace["norm"],
             trace["brand"], trace["brand_hits"],
-            self._index,
+            self._index, row_index=row_index,
         )
         for scorer_name, result in trace["fuzzy_steps"]:
             self._trace.log_fuzzy_step(
                 code, drug_name, trace["norm"],
                 trace["brand"], scorer_name, result,
                 self._cfg.fuzzy_threshold, self._index,
+                row_index=row_index,
             )
         for cidx, ok, reason in trace["component_checks"]:
             self._trace.log_component_check(
                 code, drug_name, trace["norm"],
                 trace["brand"], cidx, ok, reason,
-                self._index,
+                self._index, row_index=row_index,
             )
         match_name = rec["product_name_en"] if rec else None
         ai_eligible, ai_reason = self._ai_eligibility(
@@ -139,7 +154,7 @@ class MatchPipeline:
         self._trace.log_final(
             code, drug_name, trace["norm"],
             trace["brand"], match_name, score, method,
-            ai_eligible, ai_reason,
+            ai_eligible, ai_reason, row_index=row_index,
         )
         return rec, score, method
 
@@ -249,16 +264,28 @@ class MatchPipeline:
             return self._results
         removed = 0
         for idx, r in matched.iterrows():
-            if self._is_cleanup_mismatch(r):
+            cleanup_reason = self._cleanup_mismatch_reason(r)
+            if cleanup_reason:
+                if self._trace and self._trace.enabled:
+                    parsed = parse_drug(r["drug_name"])
+                    self._trace.log_post_cleanup(
+                        r["code"], r["drug_name"],
+                        parsed.normalized, parsed.brand,
+                        r["matched_product_name_en"],
+                        cleanup_reason, row_index=idx,
+                    )
                 self._nan_out_row(idx)
                 removed += 1
         logger.info(f"Post-cleanup: removed {removed} wrong matches")
         return self._results
 
     def _is_cleanup_mismatch(self, r):
+        return bool(self._cleanup_mismatch_reason(r))
+
+    def _cleanup_mismatch_reason(self, r):
         d_comp = parse_drug(r["drug_name"])
         m_comp = parse_drug(r["matched_product_name_en"])
-        is_ok, _ = components_match(
+        is_ok, reason = components_match(
             d_comp, m_comp, self._cfg.brand_prefix_min,
         )
         d_brand = re.sub(r"[^A-Z0-9]", "", d_comp.brand)
@@ -270,7 +297,11 @@ class MatchPipeline:
             and d_brand not in m_brand
             and m_brand not in d_brand
         )
-        return not is_ok or brand_mismatch
+        if not is_ok:
+            return reason
+        if brand_mismatch:
+            return "brand_prefix_mismatch"
+        return ""
 
     def _nan_out_row(self, idx):
         for col in _RESULT_COLS[2:6]:
