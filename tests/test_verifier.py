@@ -45,6 +45,10 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("B12", prompt)
         self.assertIn("FLAVOR", prompt)
         self.assertIn("IMPORTED", prompt)
+        self.assertIn("ROUTE", prompt)
+        self.assertIn("VIAL", prompt)
+        self.assertIn("SPRAY", prompt)
+        self.assertIn("PRICE", prompt)
 
     def test_task_prompts_are_loaded_and_renderable(self) -> None:
         rendered = render_prompt(
