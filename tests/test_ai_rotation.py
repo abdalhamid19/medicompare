@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from drug_matcher.ai_rotation import AIModelAttempt, configured_attempts, rank_attempts
+from drug_matcher.ai_rotation_health import rank_health_rows
 from drug_matcher.config import PROVIDERS
 
 
@@ -45,6 +46,31 @@ class AIRotationTests(unittest.TestCase):
 
         self.assertEqual(ranked[0].model, "strong")
         self.assertEqual(ranked[-1].model, "disabled")
+
+    def test_health_rows_are_ranked_with_score(self):
+        rows = [
+            {
+                "ok": True, "quality_rank": 2, "elapsed_s": 1.0,
+                "rate_remaining_requests": "100",
+                "provider": "groq",
+            },
+            {
+                "ok": True, "quality_rank": 1, "elapsed_s": 5.0,
+                "rate_remaining_requests": "1",
+                "provider": "opencode",
+            },
+            {
+                "ok": False, "quality_rank": 1, "elapsed_s": 0.1,
+                "provider": "groq",
+            },
+        ]
+
+        ranked = rank_health_rows(rows)
+
+        self.assertEqual(ranked[0]["provider"], "opencode")
+        self.assertEqual(ranked[0]["rotation_rank"], 1)
+        self.assertGreater(ranked[0]["rotation_score"], 0)
+        self.assertEqual(ranked[-1]["ok"], False)
 
 
 if __name__ == "__main__":
