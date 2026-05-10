@@ -25,5 +25,6 @@ Thumbs.db
 *.tmp
 *.bak
 output/trace/
+output/api_model_tests/
 output/.progress
 output/matched_drugs_verified_*.csv
