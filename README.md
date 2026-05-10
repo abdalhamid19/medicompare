@@ -70,6 +70,12 @@ python run_matcher.py --limit 10 --log-level DEBUG
 # تتبع تفصيلي لكل خطوة خوارزمية (--trace)
 python run_matcher.py --limit 50 --trace
 
+# اختبار موديلات OpenCode قبل التشغيل الطويل
+python test_opencode_models.py --mode both --timeout 20 --concurrency 4
+
+# تشغيل آمن: preflight تلقائي + حد أقصى لبحث AI
+python run_matcher.py --provider opencode --trace --ai-search-limit 200
+
 # استخدام مزود AI محدد (--provider)
 python run_ai_verify.py --provider opencode --model minimax-m2.5-free
 python run_ai_verify.py --provider openrouter --model openai/gpt-4o-mini
@@ -116,6 +122,24 @@ python run_tests.py
 | `--provider` | مزود API: `opencode`, `openrouter`, `agentrouter`, `custom` | من .env |
 | `--model` | نموذج AI (مثل `big-pickle`, `openai/gpt-4o-mini`) | من .env |
 | `--api-key` | مفتاح API (يتجاوز .env) | من .env |
+| `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
+| `--ai-timeout` | مهلة اختبار كل model/key في preflight بالثواني | 10 |
+| `--ai-search-limit N` | أقصى عدد unmatched يدخل مرحلة AI search | بلا حد |
+
+### تشغيل AI آمن وسريع
+
+عند تشغيل `run_matcher.py` مع AI، يقوم البرنامج تلقائيًا بعمل preflight سريع للمفاتيح والموديلات المتاحة. إذا فشل موديل محدد في نفس وقت التشغيل، لا يعتمد عليه البرنامج حتى لو كان مكتوبًا في `.env`، ويستخدم أول combo صالح من نفس قائمة `AGENT_ROUTER_MODEL` و`FALLBACK_MODELS` و`REVIEW_MODEL`.
+
+إذا لم يجد preflight أي model/key صالح، يكمل البرنامج تلقائيًا بدون AI بدل أن يتوقف، ويظهر السبب في `trace` عند تفعيل `--trace`.
+
+للتشغيل الطويل، يفضل:
+
+```bash
+python test_opencode_models.py --mode both --timeout 20 --concurrency 4
+python run_matcher.py --provider opencode --trace --ai-search-limit 200
+```
+
+مرحلة AI search لا ترسل كل `no_match` إلى النموذج. يتم إرسال الحالات التي لديها مرشحين أقوياء وآمنين فقط، مع الاحتفاظ بقواعد الرفض الخوارزمية مثل اختلاف الشكل أو الجرعة أو route أو imported/local.
 
 #### `benchmark_models.py`
 
@@ -262,4 +286,3 @@ pytest tests/test_indexer.py  # اختبار واحد
 
 - [GitHub Repository](https://github.com/abdalhamid19/medicompare)
 - [Issues & Discussions](https://github.com/abdalhamid19/medicompare/issues)
-
