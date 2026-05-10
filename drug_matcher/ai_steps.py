@@ -490,7 +490,7 @@ async def _batch_review(verifier, items, cfg):
         results = await verifier.review_batch(batch)
         # Propagate api_failed flag from items to results
         for j, r in enumerate(results):
-            r["api_failed"] = batch[j][6]  # 7th element is api_failed bool
+            r["api_failed"] = batch[j][7]
         all_results.extend(results)
         done = min(i + batch_size, len(items))
         logger.info(f"  Reviewed {done}/{len(items)}")

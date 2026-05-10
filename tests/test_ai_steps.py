@@ -18,6 +18,7 @@ from drug_matcher.ai_steps import (
     _apply_correction,
     _apply_search_result,
     _clear_match,
+    _batch_review,
 )
 from drug_matcher.config import MatchingConfig, APIConfig
 from drug_matcher.indexer import DrugIndex
@@ -521,6 +522,24 @@ class TestRunAiSearchWithMock(unittest.TestCase):
             )
         # low confidence -> not accepted
         self.assertEqual(out.at[0, "matched_product_name_en"], "")
+
+
+class TestBatchReview(unittest.TestCase):
+    def test_propagates_api_failed_flag_not_row_index(self):
+        verifier = AsyncMock()
+        verifier.review_batch = AsyncMock(return_value=[
+            {"is_correct": True, "row_idx": 10},
+            {"is_correct": False, "row_idx": 11},
+        ])
+        items = [
+            ("A", "B", "", "ai_rejected", 0.5, "", 10, False),
+            ("C", "D", "", "ai_confirmed", 0.0, "", 11, True),
+        ]
+
+        out = asyncio.run(_batch_review(verifier, items, MatchingConfig()))
+
+        self.assertEqual(out[0]["api_failed"], False)
+        self.assertEqual(out[1]["api_failed"], True)
 
 
 class TestAiStepsWithTrace(unittest.TestCase):

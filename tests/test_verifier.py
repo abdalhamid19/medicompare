@@ -12,7 +12,11 @@ from drug_matcher.prompts import (
     VERIFY_PROMPT,
     render_prompt,
 )
-from drug_matcher.verifier import AIVerifier, SYSTEM_PROMPT
+from drug_matcher.verifier import (
+    AIVerifier,
+    SYSTEM_PROMPT,
+    _fallback_from_unparseable_response,
+)
 
 
 class AIVerifierTests(unittest.TestCase):
@@ -114,6 +118,72 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("Inventory parsed context", user_prompt)
         self.assertIn("parsed:", user_prompt)
         self.assertIn("PANADOL 20 TABLETS", user_prompt)
+
+    def test_invalid_json_fallback_is_low_confidence_and_traceable(self) -> None:
+        result = _fallback_from_unparseable_response(
+            "This is a correct match but not JSON",
+            "test-model",
+        )
+
+        self.assertTrue(result["is_correct"])
+        self.assertLess(result["confidence"], 0.7)
+        self.assertTrue(result["parse_failed"])
+        self.assertIn("invalid_json", result["reason"])
+        self.assertEqual(result["model_used"], "test-model")
+
+    def test_review_invalid_json_does_not_override_first_ai(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))
+
+        async def fake_call(self, payload):
+            return {
+                "is_correct": False,
+                "agree": False,
+                "reason": "invalid_json:bad response",
+                "confidence": 0.55,
+                "parse_failed": True,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.review_one(
+                    "PANADOL 20 TAB",
+                    "PANADOL 20 TABLETS",
+                    "ai_rejected",
+                    0.6,
+                    "first rejected",
+                )
+            )
+
+        self.assertTrue(result["is_correct"])
+        self.assertLessEqual(result["confidence"], 0.5)
+        self.assertTrue(result["parse_failed"])
+
+    def test_fresh_review_invalid_json_rejects_conservatively(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))
+
+        async def fake_call(self, payload):
+            return {
+                "is_correct": True,
+                "reason": "invalid_json:bad response",
+                "confidence": 0.55,
+                "parse_failed": True,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.review_one(
+                    "PANADOL 20 TAB",
+                    "PANADOL 20 TABLETS",
+                    "ai_confirmed",
+                    0.0,
+                    "api failed",
+                    api_failed=True,
+                )
+            )
+
+        self.assertFalse(result["is_correct"])
+        self.assertLessEqual(result["confidence"], 0.5)
+        self.assertTrue(result["parse_failed"])
 
 
 if __name__ == "__main__":

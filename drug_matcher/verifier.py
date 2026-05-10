@@ -82,6 +82,19 @@ def _infer_is_correct(text: str) -> bool:
     return False
 
 
+def _fallback_from_unparseable_response(text: str, model: str) -> dict[str, Any]:
+    is_correct = _infer_is_correct(text)
+    confidence = 0.55 if is_correct else 0.4
+    return {
+        "is_correct": is_correct,
+        "agree": is_correct,
+        "reason": f"invalid_json:{text[:180]}",
+        "confidence": confidence,
+        "model_used": model,
+        "parse_failed": True,
+    }
+
+
 def _route_from_norm(norm: str) -> str:
     words = set(norm.split())
     routes = set(words & {"IM", "IV", "SC"})
@@ -240,13 +253,13 @@ class AIVerifier:
                                 content = data["choices"][0]["message"]["content"]
                                 result = _extract_json(content)
                                 if result is None:
-                                    # Model didn't return valid JSON
-                                    is_correct = _infer_is_correct(content)
-                                    return {
-                                        "is_correct": is_correct,
-                                        "reason": content[:200],
-                                        "confidence": 0.5,
-                                    }
+                                    logger.warning(
+                                        "  ⚠ invalid JSON from model=%s",
+                                        mdl,
+                                    )
+                                    return _fallback_from_unparseable_response(
+                                        content, mdl,
+                                    )
                                 confidence = float(result.get("confidence", 0.0))
                                 if confidence == 0.0:
                                     is_correct = bool(result.get("is_correct", False))
@@ -392,6 +405,14 @@ class AIVerifier:
         result = await self._call_api(payload)
         if result is None:
             return {"is_correct": True, "reason": "review_all_api_failed", "confidence": first_confidence}
+
+        if result.get("parse_failed"):
+            return {
+                "is_correct": not api_failed,
+                "reason": str(result.get("reason", "invalid_json")),
+                "confidence": min(float(result.get("confidence", 0.0)), 0.5),
+                "parse_failed": True,
+            }
 
         if api_failed:
             # Fresh verification: result is direct is_correct
