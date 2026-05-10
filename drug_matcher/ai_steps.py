@@ -275,10 +275,12 @@ def _apply_correction(results, idx, ai_result):
 
 
 def _clear_match(results, idx):
-    results.at[idx, "matched_product_name_en"] = ""
-    results.at[idx, "matched_product_name_ar"] = ""
-    results.at[idx, "matched_store_product_id"] = ""
-    results.at[idx, "match_score"] = ""
+    for col in (
+        "matched_product_name_en", "matched_product_name_ar",
+        "matched_store_product_id", "match_score",
+    ):
+        results[col] = results[col].astype(object)
+        results.at[idx, col] = ""
 
 
 def _get_unmatched(results):
