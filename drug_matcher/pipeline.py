@@ -322,6 +322,31 @@ class MatchPipeline:
             self._trace.save()
         return path
 
+    def save_manual_review(self, output_path: str | None = None) -> str:
+        """Save unmatched and uncertain rows for manual review."""
+        self._require_results()
+        path = output_path or str(Paths().output_csv).replace(
+            ".csv", "_manual_review.csv",
+        )
+        review = self._manual_review_rows().copy()
+        review["manual_decision"] = ""
+        review["manual_reason"] = ""
+        review["correct_store_product_id"] = ""
+        review.to_csv(path, index=False, encoding="utf-8-sig")
+        logger.info(f"Manual review CSV saved to {path}")
+        return path
+
+    def _manual_review_rows(self):
+        has_match = (
+            self._results["matched_product_name_en"].notna()
+            & (self._results["matched_product_name_en"] != "")
+        )
+        scores = pd.to_numeric(
+            self._results["match_score"], errors="coerce",
+        ).fillna(0)
+        uncertain = has_match & (scores < self._cfg.ai_verify_threshold)
+        return self._results[(~has_match) | uncertain]
+
     def print_stats(self):
         """Print final statistics."""
         if self._results is None:
@@ -387,6 +412,7 @@ class MatchPipeline:
             await self.run_ai_review()
         self.run_post_cleanup()
         self.save(output_path)
+        self.save_manual_review()
         self.print_stats()
         return self._results
 

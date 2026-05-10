@@ -48,6 +48,15 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(saved, str(output_path))
             self.assertTrue(output_path.exists())
 
+            review_path = tmp_path / "review.csv"
+            review_saved = pipeline.save_manual_review(str(review_path))
+            review = pd.read_csv(review_saved, dtype=str)
+            self.assertEqual(review_saved, str(review_path))
+            self.assertIn("manual_decision", review.columns)
+            self.assertIn("manual_reason", review.columns)
+            self.assertIn("correct_store_product_id", review.columns)
+            self.assertTrue((review["code"] == "D-2").any())
+
     def test_post_cleanup_removes_component_mismatches(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
         pipeline._results = pd.DataFrame(
