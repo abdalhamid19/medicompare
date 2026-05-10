@@ -84,7 +84,13 @@ class DrugIndexTests(unittest.TestCase):
         assert record is not None
         self.assertEqual(record["store_product_id"], "T-1")
         self.assertGreaterEqual(score, 70)
-        self.assertIn(method, {"brand_index", "token_set_ratio", "token_sort_ratio", "partial_token_sort_ratio"})
+        self.assertIn(
+            method,
+            {
+                "component_index", "brand_index", "token_set_ratio",
+                "token_sort_ratio", "partial_token_sort_ratio",
+            },
+        )
 
     def test_best_match_rejects_import_status_mismatch(self) -> None:
         index = make_index(threshold=65)
@@ -139,6 +145,17 @@ class DrugIndexTests(unittest.TestCase):
         self.assertTrue(matches)
         self.assertEqual(matches[0][0]["store_product_id"], "T-2")
         self.assertGreaterEqual(matches[0][1], 65)
+
+    def test_best_match_can_use_component_index(self) -> None:
+        index = make_reported_errors_index(threshold=65)
+
+        record, score, method = index.best_match("ALEXOLYTE 360ML BANANA FLAVOR")
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["store_product_id"], "1032871")
+        self.assertEqual(method, "component_index")
+        self.assertGreaterEqual(score, 65)
 
     def test_reported_false_negatives_are_matched(self) -> None:
         index = make_reported_errors_index(threshold=65)

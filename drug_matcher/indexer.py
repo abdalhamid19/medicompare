@@ -15,7 +15,7 @@ class DrugIndex:
 
     __slots__ = (
         "_names_en", "_names_ar", "_ids",
-        "_norms", "_parsed", "_brand_index", "_cfg",
+        "_norms", "_parsed", "_brand_index", "_component_index", "_cfg",
     )
 
     def __init__(self, tawreed_df: pd.DataFrame, cfg: MatchingConfig | None = None):
@@ -31,13 +31,20 @@ class DrugIndex:
         self._norms = [normalize(n) for n in self._names_en]
         self._parsed = [parse_drug(n) for n in self._names_en]
         self._brand_index: dict[str, list[int]] = defaultdict(list)
+        self._component_index: dict[tuple, list[int]] = defaultdict(list)
         self._build_brand_index()
+        self._build_component_index()
 
     def _build_brand_index(self):
         for i, parsed in enumerate(self._parsed):
             brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
             for plen in range(3, min(len(brand) + 1, 8)):
                 self._brand_index[brand[:plen]].append(i)
+
+    def _build_component_index(self):
+        for i, parsed in enumerate(self._parsed):
+            for key in self._component_keys(parsed):
+                self._component_index[key].append(i)
 
     # --- public read interface ---
 
@@ -63,8 +70,9 @@ class DrugIndex:
     ) -> list[tuple[int, float]]:
         """Return (idx, score) pairs for brand + fuzzy candidates."""
         brand_hits = self._brand_lookup(parsed)
+        component_hits = self._component_lookup(parsed)
         fuzzy_hits = self._fuzzy_lookup(parsed.normalized, limit)
-        return self._dedupe(brand_hits + fuzzy_hits)
+        return self._dedupe(component_hits + brand_hits + fuzzy_hits)
 
     # --- internal lookups ---
 
@@ -88,6 +96,52 @@ class DrugIndex:
                         )
                         hits.append((idx, score))
         return hits
+
+    def _component_keys(self, parsed: DrugComponents) -> list[tuple]:
+        brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
+        if len(brand) < 3:
+            return []
+        keys = [("brand", brand)]
+        if parsed.volume:
+            keys.append(("brand_volume", brand, parsed.volume))
+        if parsed.qty:
+            keys.append(("brand_qty", brand, parsed.qty))
+        if parsed.dosage_nums:
+            keys.append(("brand_dosage", brand, parsed.dosage_nums))
+        if parsed.flavor:
+            keys.append(("brand_flavor", brand, parsed.flavor))
+        return keys
+
+    def _component_lookup(self, parsed: DrugComponents) -> list[tuple[int, float]]:
+        hits = []
+        seen = set()
+        for key in self._component_keys(parsed):
+            for idx in self._component_index.get(key, []):
+                if idx in seen:
+                    continue
+                seen.add(idx)
+                is_ok, _ = components_match(
+                    parsed, self._parsed[idx],
+                    self._cfg.brand_prefix_min,
+                )
+                if is_ok:
+                    hits.append((
+                        idx,
+                        self._component_score(parsed, self._parsed[idx], idx),
+                    ))
+        return hits
+
+    def _component_score(self, parsed, candidate, idx: int) -> float:
+        score = fuzz.token_set_ratio(parsed.normalized, self._norms[idx])
+        if parsed.volume and parsed.volume == candidate.volume:
+            score += 4
+        if parsed.qty and parsed.qty == candidate.qty:
+            score += 4
+        if parsed.flavor and parsed.flavor == candidate.flavor:
+            score += 4
+        if parsed.dosage_nums and parsed.dosage_nums == candidate.dosage_nums:
+            score += 4
+        return min(score, 100.0)
 
     def _fuzzy_lookup(self, query: str, limit: int) -> list[tuple[int, float]]:
         results = process.extract(
@@ -130,6 +184,9 @@ class DrugIndex:
             return None, 0.0, "too_short"
         if not parsed.brand:
             return None, 0.0, "invalid_name"
+        rec, score = self._try_component_match(parsed)
+        if rec is not None:
+            return rec, score, "component_index"
         rec, score = self._try_brand_match(parsed, norm)
         if rec is not None:
             return rec, score, "brand_index"
@@ -153,6 +210,20 @@ class DrugIndex:
             return None, 0.0, "too_short", trace
         if not parsed.brand:
             return None, 0.0, "invalid_name", trace
+        component_hits = self._component_lookup(parsed)
+        if component_hits:
+            best_idx, best_score = max(component_hits, key=lambda x: x[1])
+            if best_score >= self._cfg.fuzzy_threshold:
+                ok, reason = components_match(
+                    parsed, self._parsed[best_idx],
+                    self._cfg.brand_prefix_min,
+                )
+                trace["component_checks"].append((best_idx, ok, reason))
+                if ok:
+                    return (
+                        self.get_record(best_idx),
+                        best_score, "component_index", trace,
+                    )
         hits = self._brand_lookup(parsed)
         trace["brand_hits"] = hits
         if hits:
@@ -196,6 +267,15 @@ class DrugIndex:
 
     def _try_brand_match(self, parsed, norm):
         hits = self._brand_lookup(parsed)
+        if not hits:
+            return None, 0.0
+        best_idx, best_score = max(hits, key=lambda x: x[1])
+        if best_score >= self._cfg.fuzzy_threshold:
+            return self.get_record(best_idx), best_score
+        return None, 0.0
+
+    def _try_component_match(self, parsed):
+        hits = self._component_lookup(parsed)
         if not hits:
             return None, 0.0
         best_idx, best_score = max(hits, key=lambda x: x[1])
