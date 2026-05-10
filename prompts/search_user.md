@@ -10,6 +10,10 @@ Candidates:
 $candidates_text
 
 Return JSON only:
-{"best_index": 1-$max_index, "reason": "brief reason", "confidence": 0.0-1.0}
+{"best_index": 0, "reason": "brief reason", "confidence": 0.0-1.0}
+
+`best_index` must be a JSON number only, not a string and not a range.
+Valid examples: 0, 1, 2. Invalid examples: "1", "1-$max_index", "1-1",
+"candidate 1".
 
 If NONE are correct or the evidence is ambiguous, set best_index to 0.

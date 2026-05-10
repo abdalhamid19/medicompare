@@ -24,6 +24,32 @@ logger = logging.getLogger("medicompare")
 _TRANSIENT_COMBO_FAILURE_LIMIT = 2
 
 
+def _coerce_best_index(value, max_index: int) -> tuple[int, bool]:
+    """Return a safe candidate index and whether the source value was valid."""
+    if isinstance(value, bool) or value is None:
+        return 0, False
+    if isinstance(value, int):
+        idx = value
+    elif isinstance(value, str) and value.strip().isdigit():
+        idx = int(value.strip())
+    else:
+        return 0, False
+    if 0 <= idx <= max_index:
+        return idx, True
+    return 0, False
+
+
+def _api_error_code(status: int, text: str) -> str:
+    lowered = text.lower()
+    if status == 400 and (
+        "failed_generation" in lowered
+        or "failed to validate json" in lowered
+        or '"code":"json_' in lowered
+    ):
+        return "json_generation_failed"
+    return f"http_{status}"
+
+
 def _extract_json(text: str) -> dict | None:
     """Extract JSON from model response, handling markdown code blocks and truncation."""
     # Try direct parse
@@ -330,12 +356,17 @@ class AIVerifier:
                 mdl = item["model"]
                 base_url = item["base_url"]
                 provider = item["provider"]
+                combo_key = self._combo_key(key, mdl, provider)
+                if combo_key in self._failed_combos:
+                    continue
                 payload["model"] = mdl
                 headers = dict(self._session.headers)
                 headers["Authorization"] = f"Bearer {key}"
 
                 for attempt in range(max_retries + 1):
                     async with self._semaphore:
+                        if combo_key in self._failed_combos:
+                            break
                         try:
                             async with self._session.post(
                                 f"{base_url}/chat/completions",
@@ -343,8 +374,10 @@ class AIVerifier:
                                 headers=headers,
                             ) as resp:
                                 if resp.status == 429:
+                                    retry_after = resp.headers.get("Retry-After", "")
                                     disabled = self._record_combo_failure(
                                         key, mdl, "rate_limited",
+                                        permanent=bool(retry_after),
                                         provider=provider,
                                     )
                                     attempts.append({
@@ -359,7 +392,7 @@ class AIVerifier:
                                         "error_code": "rate_limited",
                                         "reason": (
                                             f"429 retry_after="
-                                            f"{resp.headers.get('Retry-After', '10')}"
+                                            f"{retry_after or '10'}"
                                         ),
                                     })
                                     self._log_combo_failure(
@@ -370,9 +403,13 @@ class AIVerifier:
                                     break
                                 if resp.status != 200:
                                     text = await resp.text()
+                                    error_code = _api_error_code(resp.status, text)
                                     disabled = self._record_combo_failure(
-                                        key, mdl, f"http_{resp.status}",
-                                        permanent=resp.status in (401, 403),
+                                        key, mdl, error_code,
+                                        permanent=(
+                                            resp.status in (401, 403)
+                                            or error_code == "json_generation_failed"
+                                        ),
                                         provider=provider,
                                     )
                                     attempts.append({
@@ -384,12 +421,16 @@ class AIVerifier:
                                         "fallback_used": plan_idx > 0,
                                         "decision": "disabled" if disabled else "failed",
                                         "error_stage": "api",
-                                        "error_code": f"http_{resp.status}",
+                                        "error_code": error_code,
                                         "reason": text[:200],
                                     })
+                                    log_reason = (
+                                        "JSON generation failed"
+                                        if error_code == "json_generation_failed"
+                                        else f"API error {resp.status}"
+                                    )
                                     self._log_combo_failure(
-                                        key, mdl, f"API error {resp.status}",
-                                        text,
+                                        key, mdl, log_reason, text,
                                         provider=provider,
                                     )
                                     break  # try next (key, model) combo
@@ -702,8 +743,22 @@ class AIVerifier:
         if result is None:
             return None
         raw = result.get("_raw", {})
-        best_idx = int(raw.get("best_index", 0))
-        if best_idx > 0 and best_idx <= len(candidates):
+        raw_best_index = raw.get("best_index", 0)
+        max_index = min(len(candidates), 5)
+        best_idx, valid_index = _coerce_best_index(raw_best_index, max_index)
+        if not valid_index:
+            return {
+                "record": None, "score": 0.0,
+                "reason": f"invalid_best_index:{str(raw_best_index)[:80]}",
+                "confidence": min(float(result.get("confidence", 0.0)), 0.5),
+                "model_used": result.get("model_used", ""),
+                "provider_used": result.get("provider_used", ""),
+                "_api_attempts": result.get("_api_attempts", []),
+                "best_index": 0,
+                "parse_failed": True,
+                "error_code": "invalid_best_index",
+            }
+        if best_idx > 0:
             return {
                 "record": candidates[best_idx - 1][0],
                 "score": candidates[best_idx - 1][1],

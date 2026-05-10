@@ -483,6 +483,59 @@ class TestRunAiSearchWithMock(unittest.TestCase):
             "PANADOL EXTRA 24 TAB",
         )
 
+    def test_search_exception_does_not_stop_batch(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+            {
+                "code": "D2", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+        ])
+        index = _make_index()
+        cfg = MatchingConfig(fuzzy_threshold=70)
+        api_cfg = APIConfig(api_key="test-key")
+        trace = MatchTraceLog(enabled=True)
+
+        mock_verifier = AsyncMock()
+        mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
+        mock_verifier.__aexit__ = AsyncMock(return_value=None)
+        mock_verifier.find_better_match = AsyncMock(side_effect=[
+            ValueError("bad best_index"),
+            {
+                "record": {
+                    "product_name_en": "PANADOL EXTRA 24 TAB",
+                    "product_name_ar": "بانادول اكسترا",
+                    "store_product_id": "T-2",
+                },
+                "score": 95.0,
+                "confidence": 0.9,
+            },
+        ])
+        mock_verifier.get_fallback_log = MagicMock(return_value="")
+
+        with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
+            out = asyncio.run(
+                run_ai_search(results, index, cfg, api_cfg, trace)
+            )
+
+        self.assertEqual(out.at[0, "matched_product_name_en"], "")
+        self.assertEqual(out.at[1, "verified"], "ai_found")
+        self.assertTrue(any(
+            row.get("error_code") == "ai_search_exception"
+            for row in trace._rows
+        ))
+
     def test_passes_inventory_price_to_ai_search(self):
         results = _make_results([
             {

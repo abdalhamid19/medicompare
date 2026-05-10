@@ -385,10 +385,21 @@ async def _search_batch(verifier, results, index, unmatched, cfg, trace):
     items = list(unmatched.iterrows())
     for i in range(0, len(items), batch_size):
         batch = items[i:i + batch_size]
-        batch_results = await asyncio.gather(*[
+        raw_results = await asyncio.gather(*[
             _try_search_one(verifier, results, index, row, cfg, trace)
             for _, row in batch
-        ])
+        ], return_exceptions=True)
+        batch_results = []
+        for (_, row), item in zip(batch, raw_results):
+            if isinstance(item, Exception):
+                logger.warning(
+                    "  ⚠ AI search exception for row=%s: %s",
+                    row.name, item,
+                )
+                _trace_search_exception(trace, row, item)
+                batch_results.append(0)
+            else:
+                batch_results.append(item)
         found += sum(batch_results)
         done = min(i + batch_size, len(items))
         logger.info(f"  Searched {done}/{len(items)}, found {found}")
@@ -484,6 +495,8 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
 def _search_error_code(ai_result, confidence) -> str:
     if not ai_result:
         return "no_ai_result"
+    if ai_result.get("error_code"):
+        return str(ai_result["error_code"])
     if ai_result.get("parse_failed"):
         return "invalid_json"
     if ai_result.get("best_index", 0) == 0:
@@ -491,6 +504,21 @@ def _search_error_code(ai_result, confidence) -> str:
     if confidence < _AI_SEARCH_ACCEPT_CONFIDENCE:
         return "confidence_below_threshold"
     return "no_record"
+
+
+def _trace_search_exception(trace, row, exc):
+    if not trace or not trace.enabled:
+        return
+    drug_name = row["drug_name"]
+    parsed = parse_drug(drug_name)
+    trace.log_ai_search_result(
+        str(row.get("code", "")), drug_name, parsed.normalized, parsed.brand,
+        False, None, 0,
+        api_failures=f"{type(exc).__name__}: {str(exc)[:180]}",
+        accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
+        row_index=row.name,
+        error_code="ai_search_exception",
+    )
 
 
 def _search_candidates(parsed, norm, index, cfg, price=None):

@@ -16,6 +16,7 @@ from drug_matcher.prompts import (
 from drug_matcher.verifier import (
     AIVerifier,
     SYSTEM_PROMPT,
+    _api_error_code,
     _fallback_from_unparseable_response,
 )
 
@@ -133,7 +134,122 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("candidate_price=34", user_prompt)
         self.assertIn("price_delta=0.0%", user_prompt)
         self.assertIn("parsed:", user_prompt)
-        self.assertIn("PANADOL 20 TABLETS", user_prompt)
+
+    def test_find_better_match_accepts_numeric_string_best_index(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key"))
+
+        async def fake_call(self, payload):
+            return {
+                "_raw": {"best_index": "1"},
+                "reason": "ok",
+                "confidence": 0.9,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.find_better_match(
+                    "PANADOL 20 TAB",
+                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                )
+            )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result["record"]["product_name_en"], "PANADOL 20 TABLETS")
+        self.assertEqual(result["best_index"], 1)
+
+    def test_find_better_match_rejects_invalid_best_index_string(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key"))
+
+        async def fake_call(self, payload):
+            return {
+                "_raw": {"best_index": "1-1"},
+                "reason": "bad index",
+                "confidence": 0.95,
+                "model_used": "model-a",
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.find_better_match(
+                    "PANADOL 20 TAB",
+                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                )
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["record"])
+        self.assertEqual(result["best_index"], 0)
+        self.assertEqual(result["error_code"], "invalid_best_index")
+        self.assertTrue(result["parse_failed"])
+        self.assertIn("invalid_best_index:1-1", result["reason"])
+
+    def test_find_better_match_rejects_missing_best_index(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key"))
+
+        async def fake_call(self, payload):
+            return {
+                "_raw": {"best_index": None},
+                "reason": "missing",
+                "confidence": 0.9,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.find_better_match(
+                    "PANADOL 20 TAB",
+                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                )
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["record"])
+        self.assertEqual(result["error_code"], "invalid_best_index")
+
+    def test_find_better_match_rejects_out_of_range_best_index(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key"))
+
+        async def fake_call(self, payload):
+            return {
+                "_raw": {"best_index": 99},
+                "reason": "out of range",
+                "confidence": 0.9,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.find_better_match(
+                    "PANADOL 20 TAB",
+                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                )
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["record"])
+        self.assertEqual(result["best_index"], 0)
+        self.assertEqual(result["error_code"], "invalid_best_index")
+
+    def test_find_better_match_keeps_best_index_zero_as_no_match(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key"))
+
+        async def fake_call(self, payload):
+            return {
+                "_raw": {"best_index": 0},
+                "reason": "none",
+                "confidence": 0.8,
+            }
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.find_better_match(
+                    "PANADOL 20 TAB",
+                    [({"product_name_en": "PANADOL 20 TABLETS"}, 90.0, 0)],
+                )
+            )
+
+        self.assertIsNotNone(result)
+        self.assertIsNone(result["record"])
+        self.assertEqual(result["best_index"], 0)
+        self.assertFalse(result["parse_failed"])
 
     def test_review_prompts_include_price_context(self) -> None:
         verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))
@@ -278,6 +394,25 @@ class AIVerifierTests(unittest.TestCase):
         self.assertFalse(first)
         self.assertTrue(second)
         self.assertIn(("111111", "model-a"), verifier._failed_combos)
+
+    def test_rate_limit_can_disable_combo_immediately_for_retry_after(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="sk-primary-111111"))
+
+        disabled = verifier._record_combo_failure(
+            "sk-primary-111111", "model-a", "rate_limited",
+            permanent=True, provider="groq",
+        )
+
+        self.assertTrue(disabled)
+        self.assertIn(("groq", "111111", "model-a"), verifier._failed_combos)
+
+    def test_failed_generation_error_is_classified(self) -> None:
+        text = (
+            '{"error":{"message":"Failed to validate JSON",'
+            '"code":"json_validate_failed","failed_generation":"..."}}'
+        )
+
+        self.assertEqual(_api_error_code(400, text), "json_generation_failed")
 
     def test_request_plan_uses_rotated_attempts(self) -> None:
         attempt = AIModelAttempt(
