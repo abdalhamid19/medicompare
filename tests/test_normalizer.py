@@ -16,6 +16,7 @@ class NormalizerTests(unittest.TestCase):
             ("VITAMIN D 1.000IU", "VITAMIN D 1000 IU"),
             ("FEROGLOBIN B12 30 CAP", "FEROGLOBIN B12 30 CAP"),
             ("CALCIUM D3 30 TAB", "CALCIUM D3 30 TAB"),
+            ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 TAB IMP"),
         ]
         for raw, expected in cases:
             with self.subTest(raw=raw):
@@ -58,6 +59,7 @@ class NormalizerTests(unittest.TestCase):
             ("AUGMENTIN 625MG 10 TABS", "AUGMENTIN 625 MG 10 F.C. TAB."),
             ("INDERAL 10 MG 50TAB", "INDERAL 10 MG 50 TABS"),
             ("PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TABLETS"),
+            ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

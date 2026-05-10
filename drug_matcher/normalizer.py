@@ -28,7 +28,7 @@ FORM_PREFIXES = frozenset({
 
 NOISE_WORDS = frozenset({
     "BLUE", "RED", "WHITE", "ORS", "FLAVOR", "FLAVOUR",
-    "LIQUID", "FACIAL",
+    "LIQUID", "FACIAL", "IMP", "IMPORTED",
 })
 BRAND_QUALIFIERS = frozenset({"INFINITY", "SURACTIVE"})
 FLAVOR_WORDS = frozenset({
@@ -39,7 +39,7 @@ VITAMIN_MODIFIERS = frozenset({
 })
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
-    "SINUS", "IMP", "IMPORTED", "D",
+    "SINUS", "D",
 })
 
 @dataclass(slots=True)
