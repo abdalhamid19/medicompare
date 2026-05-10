@@ -21,6 +21,9 @@ from .prompts import (
 
 logger = logging.getLogger("medicompare")
 
+_TRANSIENT_COMBO_FAILURE_LIMIT = 2
+
+
 def _extract_json(text: str) -> dict | None:
     """Extract JSON from model response, handling markdown code blocks and truncation."""
     # Try direct parse
@@ -170,7 +173,10 @@ def _normalize_review_item(item: tuple) -> tuple:
 class AIVerifier:
     """Async AI verification client with rate limiting, batching, and key/model fallback."""
 
-    __slots__ = ("_cfg", "_session", "_semaphore", "_fallback_log", "_failed_combos")
+    __slots__ = (
+        "_cfg", "_session", "_semaphore", "_fallback_log",
+        "_failed_combos", "_combo_failures",
+    )
 
     def __init__(self, cfg: APIConfig | None = None, max_concurrent: int = 5):
         self._cfg = cfg or APIConfig()
@@ -178,6 +184,7 @@ class AIVerifier:
         self._semaphore = asyncio.Semaphore(max_concurrent)
         self._fallback_log: list[str] = []
         self._failed_combos: set[tuple[str, str]] = set()
+        self._combo_failures: dict[tuple[str, str], int] = {}
 
     def get_fallback_log(self) -> str:
         """Return and clear the API failure log for trace reporting."""
@@ -206,6 +213,30 @@ class AIVerifier:
                 if combo not in self._failed_combos and (not healthy or combo in healthy):
                     plan.append((key, mdl))
         return plan
+
+    def _record_combo_failure(
+        self, key: str, model: str, reason: str,
+        *, permanent: bool = False,
+    ) -> bool:
+        """Track failures and disable noisy key/model combos for this run."""
+        combo = (key[-6:], model)
+        if permanent:
+            self._failed_combos.add(combo)
+            return True
+        count = self._combo_failures.get(combo, 0) + 1
+        self._combo_failures[combo] = count
+        if count >= _TRANSIENT_COMBO_FAILURE_LIMIT:
+            self._failed_combos.add(combo)
+            return True
+        return False
+
+    def _log_combo_failure(
+        self, key: str, model: str, reason: str, detail: str = "",
+    ) -> None:
+        detail_text = f": {detail[:160]}" if detail else ""
+        log_msg = f"{reason}{detail_text} with model={model} key=...{key[-6:]}"
+        self._fallback_log.append(log_msg)
+        logger.warning("  ⚠ %s, trying next...", log_msg)
 
     async def __aenter__(self):
         self._session = aiohttp.ClientSession(
@@ -242,6 +273,7 @@ class AIVerifier:
         model = payload.get("model", self._cfg.model)
         plan = self._build_attempt_plan(model)
         attempts = []
+        last_unparseable: tuple[str, str] | None = None
 
         try:
             for plan_idx, (key, mdl) in enumerate(plan):
@@ -257,14 +289,17 @@ class AIVerifier:
                                 json=payload,
                                 headers=headers,
                             ) as resp:
-                                if resp.status == 429 and attempt < max_retries:
+                                if resp.status == 429:
+                                    disabled = self._record_combo_failure(
+                                        key, mdl, "rate_limited",
+                                    )
                                     attempts.append({
                                         "attempt": attempt + 1,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": resp.status,
                                         "fallback_used": plan_idx > 0,
-                                        "decision": "retry",
+                                        "decision": "disabled" if disabled else "failed",
                                         "error_stage": "api",
                                         "error_code": "rate_limited",
                                         "reason": (
@@ -272,59 +307,58 @@ class AIVerifier:
                                             f"{resp.headers.get('Retry-After', '10')}"
                                         ),
                                     })
-                                    retry_after = int(
-                                        resp.headers.get("Retry-After", "10"),
+                                    self._log_combo_failure(
+                                        key, mdl, "Rate limited",
+                                        attempts[-1]["reason"],
                                     )
-                                    await asyncio.sleep(retry_after + attempt * 2)
-                                    continue
+                                    break
                                 if resp.status != 200:
                                     text = await resp.text()
+                                    disabled = self._record_combo_failure(
+                                        key, mdl, f"http_{resp.status}",
+                                        permanent=resp.status in (401, 403),
+                                    )
                                     attempts.append({
                                         "attempt": attempt + 1,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": resp.status,
                                         "fallback_used": plan_idx > 0,
-                                        "decision": "failed",
+                                        "decision": "disabled" if disabled else "failed",
                                         "error_stage": "api",
                                         "error_code": f"http_{resp.status}",
                                         "reason": text[:200],
                                     })
-                                    log_msg = (
-                                        f"API error {resp.status} "
-                                        f"with model={mdl} key=...{key[-6:]}"
+                                    self._log_combo_failure(
+                                        key, mdl, f"API error {resp.status}",
+                                        text,
                                     )
-                                    self._fallback_log.append(log_msg)
-                                    logger.warning(f"  ⚠ {log_msg}, trying next...")
-                                    # Cache auth errors (401/403) to skip in future
-                                    if resp.status in (401, 403):
-                                        self._failed_combos.add((key[-6:], mdl))
                                     break  # try next (key, model) combo
                                 data = await resp.json()
                                 content = data["choices"][0]["message"]["content"]
                                 result = _extract_json(content)
                                 if result is None:
+                                    disabled = self._record_combo_failure(
+                                        key, mdl, "invalid_json",
+                                    )
                                     attempts.append({
                                         "attempt": attempt + 1,
                                         "key_suffix": key[-6:],
                                         "model": mdl,
                                         "status": 200,
                                         "fallback_used": plan_idx > 0,
-                                        "decision": "parse_failed",
+                                        "decision": "disabled" if disabled else "parse_failed",
                                         "error_stage": "ai_parse",
                                         "error_code": "invalid_json",
                                         "parse_failed": True,
                                         "reason": content[:200],
                                     })
+                                    last_unparseable = (content, mdl)
                                     logger.warning(
                                         "  ⚠ invalid JSON from model=%s",
                                         mdl,
                                     )
-                                    parsed = _fallback_from_unparseable_response(
-                                        content, mdl,
-                                    )
-                                    parsed["_api_attempts"] = attempts
-                                    return parsed
+                                    break
                                 attempts.append({
                                     "attempt": attempt + 1,
                                     "key_suffix": key[-6:],
@@ -334,6 +368,7 @@ class AIVerifier:
                                     "decision": "success",
                                     "reason": "parsed_json",
                                 })
+                                self._combo_failures.pop((key[-6:], mdl), None)
                                 confidence = float(result.get("confidence", 0.0))
                                 if confidence == 0.0:
                                     is_correct = bool(result.get("is_correct", False))
@@ -348,38 +383,30 @@ class AIVerifier:
                                     "_api_attempts": attempts,
                                 }
                         except Exception as e:
-                            if attempt < max_retries:
-                                attempts.append({
-                                    "attempt": attempt + 1,
-                                    "key_suffix": key[-6:],
-                                    "model": mdl,
-                                    "status": "exception",
-                                    "fallback_used": plan_idx > 0,
-                                    "decision": "retry",
-                                    "error_stage": "api",
-                                    "error_code": type(e).__name__,
-                                    "reason": str(e)[:200],
-                                })
-                                await asyncio.sleep(2 + attempt * 2)
-                                continue
+                            disabled = self._record_combo_failure(
+                                key, mdl, type(e).__name__,
+                            )
                             attempts.append({
                                 "attempt": attempt + 1,
                                 "key_suffix": key[-6:],
                                 "model": mdl,
                                 "status": "exception",
                                 "fallback_used": plan_idx > 0,
-                                "decision": "failed",
+                                "decision": "disabled" if disabled else "failed",
                                 "error_stage": "api",
                                 "error_code": type(e).__name__,
                                 "reason": str(e)[:200],
                             })
-                            log_msg = (
-                                f"Exception {type(e).__name__} "
-                                f"with model={mdl} key=...{key[-6:]}"
+                            self._log_combo_failure(
+                                key, mdl, f"Exception {type(e).__name__}",
+                                str(e),
                             )
-                            self._fallback_log.append(log_msg)
-                            logger.warning(f"  ⚠ {log_msg}, trying next...")
                             break  # try next combo
+            if last_unparseable:
+                content, mdl = last_unparseable
+                parsed = _fallback_from_unparseable_response(content, mdl)
+                parsed["_api_attempts"] = attempts
+                return parsed
             return None  # all combos exhausted
         finally:
             if close_session and self._session:

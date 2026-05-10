@@ -254,6 +254,30 @@ class AIVerifierTests(unittest.TestCase):
 
         self.assertEqual(plan, [])
 
+    def test_auth_failure_disables_combo_immediately(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="sk-primary-111111"))
+
+        disabled = verifier._record_combo_failure(
+            "sk-primary-111111", "model-a", "http_401", permanent=True,
+        )
+
+        self.assertTrue(disabled)
+        self.assertIn(("111111", "model-a"), verifier._failed_combos)
+
+    def test_transient_failures_disable_combo_after_small_limit(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="sk-primary-111111"))
+
+        first = verifier._record_combo_failure(
+            "sk-primary-111111", "model-a", "TimeoutError",
+        )
+        second = verifier._record_combo_failure(
+            "sk-primary-111111", "model-a", "TimeoutError",
+        )
+
+        self.assertFalse(first)
+        self.assertTrue(second)
+        self.assertIn(("111111", "model-a"), verifier._failed_combos)
+
 
 if __name__ == "__main__":
     unittest.main()
