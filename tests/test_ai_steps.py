@@ -19,6 +19,7 @@ from drug_matcher.ai_steps import (
     _apply_search_result,
     _clear_match,
     _batch_review,
+    _apply_review_results,
 )
 from drug_matcher.config import MatchingConfig, APIConfig
 from drug_matcher.indexer import DrugIndex
@@ -522,6 +523,112 @@ class TestRunAiSearchWithMock(unittest.TestCase):
             )
         # low confidence -> not accepted
         self.assertEqual(out.at[0, "matched_product_name_en"], "")
+
+    def test_borderline_confidence_below_search_gate_rejected(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+        ])
+        index = _make_index()
+        cfg = MatchingConfig(fuzzy_threshold=70)
+        api_cfg = APIConfig(api_key="test-key")
+
+        mock_verifier = AsyncMock()
+        mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
+        mock_verifier.__aexit__ = AsyncMock(return_value=None)
+        mock_verifier.find_better_match = AsyncMock(return_value={
+            "record": {
+                "product_name_en": "PANADOL EXTRA 24 TAB",
+                "product_name_ar": "بانادول اكسترا",
+                "store_product_id": "T-2",
+            },
+            "score": 85.0,
+            "confidence": 0.72,
+        })
+
+        with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
+            out = asyncio.run(
+                run_ai_search(results, index, cfg, api_cfg)
+            )
+        self.assertEqual(out.at[0, "matched_product_name_en"], "")
+
+
+class TestApplyReviewResults(unittest.TestCase):
+    def test_low_confidence_review_disagreement_keeps_first_decision(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "ai_rejected",
+                "match_method": "ai_verified",
+            },
+        ])
+        index = _make_index()
+        verifier = MagicMock()
+        verifier._cfg.review_model = "review"
+        verifier.get_fallback_log.return_value = ""
+
+        overridden = asyncio.run(
+            _apply_review_results(
+                verifier, results, index,
+                [{
+                    "row_idx": 0,
+                    "is_correct": False,
+                    "confidence": 0.6,
+                    "reason": "uncertain disagreement",
+                    "api_failed": False,
+                }],
+                MatchingConfig(),
+                trace=None,
+            )
+        )
+
+        self.assertEqual(overridden, 0)
+        self.assertEqual(results.at[0, "verified"], "ai_rejected")
+        self.assertEqual(results.at[0, "ai_review_confidence"], 0.6)
+
+    def test_fresh_review_low_confidence_confirm_rejects_conservatively(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_ar": "بانادول اكسترا",
+                "matched_store_product_id": "T-2",
+                "match_score": 85.0, "verified": "ai_confirmed",
+                "match_method": "ai_verified",
+            },
+        ])
+        index = _make_index()
+        verifier = MagicMock()
+        verifier._cfg.review_model = "review"
+        verifier.get_fallback_log.return_value = ""
+
+        overridden = asyncio.run(
+            _apply_review_results(
+                verifier, results, index,
+                [{
+                    "row_idx": 0,
+                    "is_correct": True,
+                    "confidence": 0.6,
+                    "reason": "low confidence",
+                    "api_failed": True,
+                }],
+                MatchingConfig(),
+                trace=None,
+            )
+        )
+
+        self.assertEqual(overridden, 1)
+        self.assertEqual(results.at[0, "verified"], "ai_review_rejected")
+        self.assertEqual(results.at[0, "matched_product_name_en"], "")
 
 
 class TestBatchReview(unittest.TestCase):

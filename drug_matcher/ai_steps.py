@@ -11,6 +11,9 @@ from .verifier import AIVerifier
 
 logger = logging.getLogger("medicompare")
 
+_AI_SEARCH_ACCEPT_CONFIDENCE = 0.75
+_AI_REVIEW_OVERRIDE_CONFIDENCE = 0.75
+
 
 async def run_ai_verification(
     results: pd.DataFrame,
@@ -343,7 +346,10 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
         )
     ai_result = await verifier.find_better_match(drug_name, candidates)
     confidence = ai_result.get("confidence", 0) if ai_result else 0
-    if ai_result and ai_result.get("record") and confidence >= 0.7:
+    if (
+        ai_result and ai_result.get("record")
+        and confidence >= _AI_SEARCH_ACCEPT_CONFIDENCE
+    ):
         match_name = ai_result["record"]["product_name_en"]
         _apply_search_result(results, row.name, ai_result)
         if trace and trace.enabled:
@@ -352,6 +358,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 True, match_name, confidence,
                 model_used=ai_result.get("model_used", ""),
                 api_failures=verifier.get_fallback_log(),
+                accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
             )
         return 1
     if trace and trace.enabled:
@@ -360,6 +367,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
             False, None, confidence,
             model_used=ai_result.get("model_used", "") if ai_result else "",
             api_failures=verifier.get_fallback_log(),
+            accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
         )
     return 0
 
@@ -511,13 +519,16 @@ async def _apply_review_results(
         parsed = parse_drug(drug_name)
         first_decision = results.at[idx, "verified"]
         review_confidence = rr.get("confidence", 0)
+        review_confidence = pd.to_numeric(review_confidence, errors="coerce")
+        if pd.isna(review_confidence):
+            review_confidence = 0.0
         review_reason = rr.get("reason", "")
         is_correct = rr.get("is_correct", True)
         is_api_failed = rr.get("api_failed", False)
 
         if is_api_failed:
             # First AI never made a real decision — second model's result is the primary decision
-            if is_correct:
+            if is_correct and review_confidence >= _AI_REVIEW_OVERRIDE_CONFIDENCE:
                 results.at[idx, "verified"] = "ai_confirmed"
                 results.at[idx, "match_method"] = "ai_verified"
                 results.at[idx, "ai_confidence"] = round(review_confidence, 2)
@@ -562,6 +573,18 @@ async def _apply_review_results(
                 )
         else:
             # Second model disagrees with first AI
+            if review_confidence < _AI_REVIEW_OVERRIDE_CONFIDENCE:
+                results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+                if trace and trace.enabled:
+                    trace.log_ai_review_result(
+                        results.at[idx, "code"], drug_name,
+                        parsed.normalized, parsed.brand,
+                        True, review_confidence, review_reason,
+                        f"{first_decision}_kept_low_confidence_review",
+                        review_model=verifier._cfg.review_model,
+                        api_failures=verifier.get_fallback_log(),
+                    )
+                continue
             overridden += 1
             if first_decision in ("ai_confirmed", "ai_corrected"):
                 # First AI said correct, second says wrong -> reject

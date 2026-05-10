@@ -237,7 +237,7 @@ class MatchTraceLog:
     def log_ai_search_result(
         self, code, name, norm, brand,
         found, match_name, confidence,
-        model_used="", api_failures="",
+        model_used="", api_failures="", accept_threshold=0.75,
     ):
         if not self._enabled:
             return
@@ -253,7 +253,7 @@ class MatchTraceLog:
         row["selection_reason"] = (
             f"AI_model={model_used}"
             f" confidence={round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
-            f" >= 0.7 -> {'accepted' if found else 'rejected'}"
+            f" >= {accept_threshold} -> {'accepted' if found else 'rejected'}"
         )
         if api_failures:
             row["selection_reason"] += f" | API_failures: {api_failures}"
