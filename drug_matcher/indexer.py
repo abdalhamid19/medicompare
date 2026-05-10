@@ -5,7 +5,10 @@ from collections import defaultdict
 import pandas as pd
 from rapidfuzz import fuzz, process
 
-from .normalizer import normalize, parse_drug, DrugComponents, components_match
+from .normalizer import (
+    normalize, parse_drug, DrugComponents, components_match,
+    OCULAR_FORMS,
+)
 from .config import MatchingConfig
 
 
@@ -134,14 +137,21 @@ class DrugIndex:
     def _component_score(self, parsed, candidate, idx: int) -> float:
         score = fuzz.token_set_ratio(parsed.normalized, self._norms[idx])
         if parsed.volume and parsed.volume == candidate.volume:
-            score += 4
+            score += 10
         if parsed.qty and parsed.qty == candidate.qty:
-            score += 4
+            score += 8
+        if parsed.form and self._forms_match(parsed.form, candidate.form):
+            score += 10
         if parsed.flavor and parsed.flavor == candidate.flavor:
-            score += 4
+            score += 8
         if parsed.dosage_nums and parsed.dosage_nums == candidate.dosage_nums:
-            score += 4
+            score += 8
         return min(score, 100.0)
+
+    def _forms_match(self, left: str, right: str) -> bool:
+        if left == right:
+            return True
+        return bool(left in OCULAR_FORMS and right in OCULAR_FORMS)
 
     def _fuzzy_lookup(self, query: str, limit: int) -> list[tuple[int, float]]:
         results = process.extract(

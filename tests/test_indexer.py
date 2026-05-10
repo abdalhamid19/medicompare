@@ -202,6 +202,7 @@ class DrugIndexTests(unittest.TestCase):
             ("ALOEKITA HAIR GROWTH SPRAY 200 ML", "2097309"),
             ("ALPHANOVA OPHTALMIC SOLUTION 5 ML", "2144773"),
             ("ALPHANOVA PLUS OPHTALMIC SOLUTION 5 ML", "2462819"),
+            ("ALLERBAN SYRUP 120ML", "907705"),
         ]
         for query, expected_id in cases:
             with self.subTest(query=query):

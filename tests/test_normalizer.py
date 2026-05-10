@@ -100,6 +100,7 @@ class NormalizerTests(unittest.TestCase):
             ("INDERAL 10 MG 50TAB", "INDERAL 10 MG 50 TABS"),
             ("PANADOL NIGHT 20 TAB", "PANADOL NIGHT 20 TABLETS"),
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB IMP"),
+            ("ALLERBAN SYRUP 120ML", "ALLERBAN 1 MG / 5 ML SYRUP 100 ML"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

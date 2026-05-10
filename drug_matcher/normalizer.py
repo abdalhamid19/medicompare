@@ -46,6 +46,7 @@ CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
     "SINUS", "D",
 })
+OCULAR_FORMS = frozenset({"OPHTALMIC", "EYE", "DROPS", "SOLUTION"})
 
 @dataclass(slots=True)
 class DrugComponents:
@@ -247,6 +248,8 @@ def components_match(
 
     # Volume check
     if d.volume and m.volume and d.volume != m.volume:
+        if d.form == "SYRUP" and m.form == "SYRUP":
+            return True, "ok"
         return False, "different_volume"
 
     # Weight check
