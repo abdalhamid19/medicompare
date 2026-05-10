@@ -47,6 +47,18 @@ PROVIDERS = {
         "env_keys": ["AGENT_ROUTER_API_KEY"],
         "default_model": "glm-5.1",
     },
+    "groq": {
+        "base_url": "https://api.groq.com/openai/v1",
+        "env_key": "GROQ_API_KEY",
+        "env_keys": ["GROQ_API_KEY_1", "GROQ_API_KEY"],
+        "default_model": "openai/gpt-oss-120b",
+    },
+    "rotation": {
+        "base_url": "",
+        "env_key": "",
+        "env_keys": [],
+        "default_model": "",
+    },
     "custom": {
         "base_url": "",
         "env_key": "AGENT_ROUTER_API_KEY",
@@ -115,6 +127,7 @@ class APIConfig:
     ))
     review_model: str = field(default_factory=lambda: os.getenv("REVIEW_MODEL", ""))
     healthy_combos: tuple = ()
+    attempt_plan: tuple = ()
     max_tokens: int = 1024
     temperature: float = 0.1
 
