@@ -60,6 +60,39 @@ PROVIDERS = {
         "keys": [],  # public endpoint
         "all_free": False,
     },
+    "cerebras": {
+        "url": "https://api.cerebras.ai/v1/models",
+        "chat_url": "https://api.cerebras.ai/v1/chat/completions",
+        "keys": [os.getenv("CEREBRAS_API_KEY_1", ""), os.getenv("CEREBRAS_API_KEY", "")],
+        "all_free": True,  # Cerebras has no paid tier
+    },
+    "github": {
+        "url": "https://models.github.ai/v1/models",
+        "chat_url": "https://models.github.ai/v1/chat/completions",
+        "keys": [os.getenv("GITHUB_API_KEY_1", ""), os.getenv("GITHUB_API_KEY", "")],
+        "all_free": True,  # GitHub Models free within rate limits
+    },
+    "google": {
+        "url": "https://generativelanguage.googleapis.com/v1beta/models",
+        "chat_url": "",  # Google uses different chat endpoint format
+        "keys": [os.getenv("GOOGLE_API_KEY_1", ""), os.getenv("GOOGLE_API_KEY", "")],
+        "all_free": True,  # Google Gemini free within rate limits
+        "response_key": "models",  # different API response key
+    },
+    "mistral": {
+        "url": "https://api.mistral.ai/v1/models",
+        "chat_url": "https://api.mistral.ai/v1/chat/completions",
+        "keys": [os.getenv("MISTRAL_API_KEY_1", ""), os.getenv("MISTRAL_API_KEY", "")],
+        "all_free": False,
+    },
+    "cloudflare": {
+        "url": "",  # built dynamically from account_id
+        "chat_url": "",  # built dynamically
+        "keys": [os.getenv("CLOUDFLARE_API_TOKEN_1", ""), os.getenv("CLOUDFLARE_API_TOKEN", "")],
+        "all_free": True,  # Cloudflare Workers AI free within limits
+        "account_id": os.getenv("CLOUDFLARE_ACCOUNT_ID_1", "") or os.getenv("CLOUDFLARE_ACCOUNT_ID", ""),
+        "response_key": "result",  # different API response key
+    },
 }
 
 # ── Helpers ────────────────────────────────────────────────
@@ -85,12 +118,28 @@ def _key(providers_cfg: dict, name: str) -> str:
 
 # ── Fetch /models ──────────────────────────────────────────
 async def fetch_models(
-    session: aiohttp.ClientSession, name: str, url: str, keys: list[str]
+    session: aiohttp.ClientSession, name: str, url: str, keys: list[str],
+    response_key: str = "data", provider_cfg: dict | None = None,
 ) -> list[dict]:
     headers = {"Content-Type": "application/json"}
     key = next((k for k in keys if k), "")
-    if key:
+
+    # Google: key goes in URL query param
+    if name == "google" and key:
+        sep = "&" if "?" in url else "?"
+        url = f"{url}{sep}key={key}"
+    # Cloudflare: build URL from account_id
+    elif name == "cloudflare":
+        account_id = (provider_cfg or {}).get("account_id", "")
+        if not account_id:
+            print(f"  ❌ {name}: no CLOUDFLARE_ACCOUNT_ID")
+            return []
+        url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/models/search"
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+    elif key:
         headers["Authorization"] = f"Bearer {key}"
+
     try:
         async with session.get(url, headers=headers) as resp:
             if resp.status != 200:
@@ -98,7 +147,7 @@ async def fetch_models(
                 print(f"  ❌ {name}: status={resp.status} {text[:200]}")
                 return []
             data = await resp.json()
-            return data.get("data", [])
+            return data.get(response_key, [])
     except Exception as e:
         print(f"  ❌ {name}: {e}")
         return []
@@ -208,6 +257,192 @@ def normalize_model(provider: str, m: dict, provider_all_free: bool) -> dict:
     return row
 
 
+def normalize_google(m: dict) -> dict:
+    """Normalize Google Gemini API model format."""
+    mid = m.get("name", "")  # e.g. "models/gemini-2.5-flash"
+    display = m.get("displayName", "")
+    is_free = True  # Google Gemini free tier
+    return {
+        "provider": "google",
+        "model_id": mid,
+        "name": display,
+        "owned_by": "Google",
+        "is_free": is_free,
+        "prompt_price_per_1m": "0",
+        "completion_price_per_1m": "0",
+        "image_price_per_1m": "",
+        "audio_price_per_1m": "",
+        "web_search_price": "",
+        "input_cache_read_price": "",
+        "input_cache_write_price": "",
+        "internal_reasoning_price": "",
+        "context_length": _safe(m.get("inputTokenLimit"), ""),
+        "modality": "text+image+audio+video->text",
+        "input_modalities": "|".join(m.get("supportedGenerationMethods", [])),
+        "output_modalities": "text",
+        "tokenizer": "",
+        "instruct_type": "",
+        "max_completion_tokens": _safe(m.get("outputTokenLimit"), ""),
+        "is_moderated": "",
+        "per_request_limits": "",
+        "supported_parameters": "|".join(m.get("supportedGenerationMethods", [])),
+        "knowledge_cutoff": "",
+        "expiration_date": "",
+        "active": "true" if "generateContent" in m.get("supportedGenerationMethods", []) else "false",
+        "description": (m.get("description") or "")[:500],
+        "probe_status": "",
+        "rate_limit_requests": "",
+        "rate_limit_tokens": "",
+        "rate_remaining_requests": "",
+        "rate_remaining_tokens": "",
+        "rate_reset_requests": "",
+        "retry_after": "",
+        "probe_error": "",
+    }
+
+
+def normalize_cloudflare(m: dict) -> dict:
+    """Normalize Cloudflare Workers AI model format."""
+    mid = m.get("name", "")  # e.g. "@cf/openai/gpt-oss-120b"
+    task = m.get("task", {})
+    task_name = task.get("name", "") if task else ""
+    is_free = True  # Cloudflare Workers AI free within limits
+    return {
+        "provider": "cloudflare",
+        "model_id": mid,
+        "name": mid.replace("@cf/", ""),
+        "owned_by": "",
+        "is_free": is_free,
+        "prompt_price_per_1m": "0",
+        "completion_price_per_1m": "0",
+        "image_price_per_1m": "",
+        "audio_price_per_1m": "",
+        "web_search_price": "",
+        "input_cache_read_price": "",
+        "input_cache_write_price": "",
+        "internal_reasoning_price": "",
+        "context_length": "",
+        "modality": task_name,
+        "input_modalities": "",
+        "output_modalities": "",
+        "tokenizer": "",
+        "instruct_type": "",
+        "max_completion_tokens": "",
+        "is_moderated": "",
+        "per_request_limits": "",
+        "supported_parameters": "",
+        "knowledge_cutoff": "",
+        "expiration_date": "",
+        "active": "true",
+        "description": (m.get("description") or "")[:500],
+        "probe_status": "",
+        "rate_limit_requests": "",
+        "rate_limit_tokens": "",
+        "rate_remaining_requests": "",
+        "rate_remaining_tokens": "",
+        "rate_reset_requests": "",
+        "retry_after": "",
+        "probe_error": "",
+    }
+
+
+def normalize_github(m: dict) -> dict:
+    """Normalize GitHub Models API format."""
+    mid = m.get("id", "")
+    rate_tier = m.get("rate_limit_tier", "")
+    is_free = True  # GitHub Models free within rate limits
+    return {
+        "provider": "github",
+        "model_id": mid,
+        "name": m.get("name", ""),
+        "owned_by": m.get("publisher", ""),
+        "is_free": is_free,
+        "prompt_price_per_1m": "0",
+        "completion_price_per_1m": "0",
+        "image_price_per_1m": "",
+        "audio_price_per_1m": "",
+        "web_search_price": "",
+        "input_cache_read_price": "",
+        "input_cache_write_price": "",
+        "internal_reasoning_price": "",
+        "context_length": "",
+        "modality": "",
+        "input_modalities": "|".join(m.get("supported_input_modalities", [])),
+        "output_modalities": "|".join(m.get("supported_output_modalities", [])),
+        "tokenizer": "",
+        "instruct_type": "",
+        "max_completion_tokens": "",
+        "is_moderated": "",
+        "per_request_limits": rate_tier,
+        "supported_parameters": "",
+        "knowledge_cutoff": "",
+        "expiration_date": "",
+        "active": "true",
+        "description": (m.get("summary") or "")[:500],
+        "probe_status": "",
+        "rate_limit_requests": "",
+        "rate_limit_tokens": "",
+        "rate_remaining_requests": "",
+        "rate_remaining_tokens": "",
+        "rate_reset_requests": "",
+        "retry_after": "",
+        "probe_error": "",
+    }
+
+
+def normalize_mistral(m: dict) -> dict:
+    """Normalize Mistral API model format."""
+    mid = m.get("id", "")
+    caps = m.get("capabilities", {})
+    is_free = "free" in mid.lower() or mid.startswith("mistral-small") or mid.startswith("ministral") or mid.startswith("codestral")
+    return {
+        "provider": "mistral",
+        "model_id": mid,
+        "name": m.get("name", mid),
+        "owned_by": m.get("owned_by", "mistralai"),
+        "is_free": is_free,
+        "prompt_price_per_1m": "",
+        "completion_price_per_1m": "",
+        "image_price_per_1m": "",
+        "audio_price_per_1m": "",
+        "web_search_price": "",
+        "input_cache_read_price": "",
+        "input_cache_write_price": "",
+        "internal_reasoning_price": "",
+        "context_length": _safe(m.get("max_context_length"), ""),
+        "modality": "",
+        "input_modalities": "",
+        "output_modalities": "",
+        "tokenizer": "",
+        "instruct_type": "",
+        "max_completion_tokens": _safe(m.get("max_output_tokens"), ""),
+        "is_moderated": "",
+        "per_request_limits": "",
+        "supported_parameters": "|".join(k for k, v in caps.items() if v is True) if caps else "",
+        "knowledge_cutoff": "",
+        "expiration_date": "",
+        "active": "true",
+        "description": (m.get("description") or "")[:500],
+        "probe_status": "",
+        "rate_limit_requests": "",
+        "rate_limit_tokens": "",
+        "rate_remaining_requests": "",
+        "rate_remaining_tokens": "",
+        "rate_reset_requests": "",
+        "retry_after": "",
+        "probe_error": "",
+    }
+
+
+# Map provider name to its normalize function
+NORMALIZE_FN = {
+    "google": normalize_google,
+    "cloudflare": normalize_cloudflare,
+    "github": normalize_github,
+    "mistral": normalize_mistral,
+}
+
+
 # ── Main ───────────────────────────────────────────────────
 async def main(args):
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -218,9 +453,11 @@ async def main(args):
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
         for name, info in PROVIDERS.items():
             print(f"\n{'='*60}")
-            print(f"  {name.upper()} — {info['url']}")
+            print(f"  {name.upper()} — {info.get('url') or '(dynamic)'}")
             print(f"{'='*60}")
-            models = await fetch_models(session, name, info["url"], info["keys"])
+            response_key = info.get("response_key", "data")
+            models = await fetch_models(session, name, info.get("url", ""), info["keys"],
+                                        response_key=response_key, provider_cfg=info)
             if not models:
                 continue
 
@@ -230,7 +467,23 @@ async def main(args):
             free_models = []
             paid_models = []
             for m in models:
-                row = normalize_model(name, m, info["all_free"])
+                # Cloudflare: skip non-text-generation models
+                if name == "cloudflare":
+                    task_name = (m.get("task") or {}).get("name", "")
+                    if task_name not in ("Text Generation", "Text Generation 2"):
+                        continue
+                # Google: skip models that don't support generateContent
+                if name == "google":
+                    methods = m.get("supportedGenerationMethods", [])
+                    if "generateContent" not in methods:
+                        continue
+
+                # Use provider-specific normalize if available, else generic
+                norm_fn = NORMALIZE_FN.get(name)
+                if norm_fn:
+                    row = norm_fn(m)
+                else:
+                    row = normalize_model(name, m, info["all_free"])
 
                 # Probe rate limits for chat models (skip whisper, guard, etc.)
                 if args.probe and chat_url and key:

@@ -48,6 +48,9 @@ async def run_rotation_health(
 def rank_health_rows(rows: list[dict]) -> list[dict]:
     ranked = sorted(rows, key=_health_sort_key)
     for idx, row in enumerate(ranked, start=1):
+        row["health_status"] = health_status(row)
+        row["fallback_tier"] = fallback_tier(row)
+        row["rotation_recommendation"] = rotation_recommendation(row)
         row["rotation_rank"] = idx
         row["rotation_score"] = _rotation_score(row)
     return ranked
@@ -76,9 +79,10 @@ def attempts_from_health(
     rows: list[dict],
 ) -> tuple[AIModelAttempt, ...]:
     by_key = {attempt.safe_tuple(): attempt for attempt in attempts}
-    selected = []
+    healthy = []
+    fallback = []
     for row in rows:
-        if not row.get("ok") or row.get("mode") != "json":
+        if row.get("mode") != "json":
             continue
         key = (
             str(row.get("provider", "")),
@@ -86,9 +90,13 @@ def attempts_from_health(
             str(row.get("model", "")),
         )
         attempt = by_key.get(key)
-        if attempt:
-            selected.append(attempt)
-    return tuple(selected)
+        if not attempt:
+            continue
+        if row.get("ok"):
+            healthy.append(attempt)
+        else:
+            fallback.append(attempt)
+    return tuple(healthy or fallback)
 
 
 def _with_attempt(row: dict, attempt: AIModelAttempt) -> dict:
@@ -99,8 +107,9 @@ def _with_attempt(row: dict, attempt: AIModelAttempt) -> dict:
 
 
 def _health_sort_key(row: dict):
+    tier = fallback_tier(row)
     return (
-        not row.get("ok"),
+        tier,
         int(row.get("quality_rank") or 999),
         -_quota_remaining(row),
         float(row.get("elapsed_s") or 9999),
@@ -115,6 +124,53 @@ def _rotation_score(row: dict) -> float:
     quota = min(_quota_remaining(row), 1000.0) / 20.0
     latency = max(0.0, 20.0 - float(row.get("elapsed_s") or 20))
     return round(quality + quota + latency, 2)
+
+
+def health_status(row: dict) -> str:
+    if row.get("ok"):
+        return "working"
+    error_type = str(row.get("error_type", ""))
+    http_status = str(row.get("http_status", ""))
+    message = str(row.get("error_message", "")).lower()
+    if error_type == "TimeoutError":
+        return "degraded"
+    if error_type == "invalid_json" or "invalid_json" in error_type:
+        return "degraded"
+    if http_status == "429" or error_type == "http_429":
+        return "quota-limited"
+    if http_status == "403" or error_type == "http_403":
+        return "permission-failed"
+    if (
+        http_status == "404"
+        or error_type == "http_404"
+        or "model_not_found" in message
+        or "does not exist" in message
+        or "no such model" in message
+    ):
+        return "model-not-accessible"
+    return "failed"
+
+
+def fallback_tier(row: dict) -> int:
+    return {
+        "working": 0,
+        "degraded": 1,
+        "quota-limited": 2,
+        "permission-failed": 3,
+        "model-not-accessible": 4,
+        "failed": 5,
+    }.get(health_status(row), 5)
+
+
+def rotation_recommendation(row: dict) -> str:
+    return {
+        "working": "use-first",
+        "degraded": "late-retry",
+        "quota-limited": "last-choice-quota",
+        "permission-failed": "last-choice-permission",
+        "model-not-accessible": "last-choice-model-access",
+        "failed": "last-choice",
+    }.get(health_status(row), "last-choice")
 
 
 def _quota_remaining(row: dict) -> float:

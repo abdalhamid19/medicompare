@@ -5,9 +5,18 @@ import os
 from dataclasses import dataclass, field
 
 from .ai_health import dedupe, mask_key, split_csv
-from .config import PROVIDERS
+from .config import PROVIDERS, cloudflare_base_url, provider_base_url
 
-PROVIDER_ORDER = ("groq", "opencode", "openrouter")
+PROVIDER_ORDER = (
+    "groq",
+    "opencode",
+    "openrouter",
+    "github",
+    "cerebras",
+    "google",
+    "mistral",
+    "cloudflare",
+)
 
 DEFAULT_MODELS = {
     "groq": (
@@ -56,6 +65,38 @@ DEFAULT_MODELS = {
         "liquid/lfm-2.5-1.2b-instruct:free",
         "openrouter/owl-alpha",
         "openrouter/free",
+    ),
+    "github": (
+        "openai/gpt-4.1-mini",
+        "openai/gpt-4o-mini",
+        "openai/gpt-4.1",
+        "openai/gpt-4.1-nano",
+        "meta/Llama-3.3-70B-Instruct",
+    ),
+    "cloudflare": (
+        "@cf/openai/gpt-oss-120b",
+        "@cf/openai/gpt-oss-20b",
+        "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+        "@cf/qwen/qwen3-32b",
+    ),
+    "cerebras": (
+        "llama3.1-8b",
+        "gpt-oss-120b",
+        "gpt-oss-20b",
+        "llama-4-scout-17b-16e-instruct",
+    ),
+    "google": (
+        "gemini-2.5-flash",
+        "gemini-2.5-pro",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+    ),
+    "mistral": (
+        "mistral-small-latest",
+        "mistral-medium-latest",
+        "mistral-large-latest",
+        "ministral-8b-latest",
+        "open-mistral-nemo",
     ),
 }
 
@@ -119,13 +160,13 @@ def _selected_providers(value: str) -> tuple[str, ...]:
 
 def _provider_attempts(provider: str) -> list[AIModelAttempt]:
     info = PROVIDERS.get(provider, {})
-    base_url = info.get("base_url", "")
-    if not base_url:
-        return []
     keys = _provider_keys(provider, info)
     models = _provider_models(provider, info)
     attempts = []
     for key_name, key_value in keys:
+        base_url = _provider_base_url(provider, info, key_name)
+        if not base_url:
+            continue
         for rank, model in enumerate(models, start=1):
             attempts.append(
                 AIModelAttempt(
@@ -138,6 +179,23 @@ def _provider_attempts(provider: str) -> list[AIModelAttempt]:
                 )
             )
     return attempts
+
+
+def _cloudflare_account_ids(info: dict) -> dict[str, str]:
+    account_id_envs = info.get("account_id_envs", ())
+    return {
+        key_env: os.getenv(account_env, "").strip()
+        for key_env, account_env in zip(info.get("env_keys", ()), account_id_envs)
+        if os.getenv(account_env, "").strip()
+    }
+
+
+def _provider_base_url(provider: str, info: dict, key_name: str) -> str:
+    if provider == "cloudflare":
+        account_id = _cloudflare_account_ids(info).get(key_name, "")
+        if account_id:
+            return cloudflare_base_url(account_id)
+    return provider_base_url(info)
 
 
 def _provider_keys(provider: str, info: dict) -> list[tuple[str, str]]:

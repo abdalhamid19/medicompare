@@ -131,8 +131,8 @@ async def _preflight_rotation(api_cfg, timeout, trace=None, concurrency=4):
             trace.log_rotation_ranked_attempt(row)
         trace.log_ai_preflight_result(rows, len(selected))
     logger.info(
-        "AI rotation preflight: %s/%s healthy attempts",
-        len(selected), len(rows),
+        "AI rotation preflight: %s/%s selected attempts (%s healthy)",
+        len(selected), len(rows), len(_healthy_rows(rows)),
     )
     return _rotation_api_config(
         selected, max_tokens=api_cfg.max_tokens,

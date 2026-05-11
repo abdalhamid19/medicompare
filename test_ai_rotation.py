@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from collections import Counter
 
 from drug_matcher.ai_rotation import configured_attempts
 from drug_matcher.ai_rotation_health import (
@@ -24,6 +25,9 @@ def print_row(row: dict) -> None:
         f"rpd={_quota(row, 'rate_remaining_requests', 'rate_limit_requests')} "
         f"tpm={_quota(row, 'rate_remaining_tokens', 'rate_limit_tokens')} "
         f"reset={row.get('quota_reset_in') or row.get('retry_after_in') or 'n/a'} "
+        f"status={row.get('health_status')} "
+        f"tier={row.get('fallback_tier')} "
+        f"recommend={row.get('rotation_recommendation')} "
         f"score={row.get('rotation_score')} "
         f"error={row.get('error_type')}",
         flush=True,
@@ -36,6 +40,20 @@ def _quota(row: dict, remaining_key: str, limit_key: str) -> str:
     remaining = row.get(remaining_key) or "n/a"
     limit = row.get(limit_key) or "n/a"
     return f"{remaining}/{limit}"
+
+
+def print_summary(rows: list[dict]) -> None:
+    by_status = Counter(row.get("health_status", "unknown") for row in rows)
+    by_provider_status = Counter(
+        (row.get("provider", ""), row.get("health_status", "unknown"))
+        for row in rows
+    )
+    print("\nStatus summary:", flush=True)
+    for status, count in by_status.most_common():
+        print(f"  {status}: {count}", flush=True)
+    print("\nProvider/status summary:", flush=True)
+    for (provider, status), count in sorted(by_provider_status.items()):
+        print(f"  {provider}: {status}={count}", flush=True)
 
 
 async def run(args) -> int:
@@ -59,6 +77,7 @@ async def run(args) -> int:
     )
     for row in rows:
         print_row(row)
+    print_summary(rows)
     csv_path, json_path = write_rotation_reports(rows)
     ok_count = sum(1 for row in rows if row.get("ok"))
     print(f"\nSummary: {ok_count}/{len(rows)} passed")

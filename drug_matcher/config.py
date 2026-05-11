@@ -16,6 +16,40 @@ def setup_logging(level: str = "INFO"):
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+
+def numbered_env_keys(prefix: str, count: int = 6, include_legacy: bool = True) -> list[str]:
+    keys = [f"{prefix}_{idx}" for idx in range(1, count + 1)]
+    if include_legacy:
+        keys.append(prefix)
+    return keys
+
+
+def configured_env_key_names() -> list[str]:
+    keys: list[str] = []
+    for info in PROVIDERS.values():
+        keys.extend(info.get("env_keys", ()))
+    return keys
+
+
+def configured_env_key_values() -> tuple[str, ...]:
+    return tuple(os.getenv(name, "") for name in configured_env_key_names())
+
+
+def provider_base_url(info: dict) -> str:
+    account_id = os.getenv(info.get("account_id_env", ""), "").strip()
+    if account_id:
+        return cloudflare_base_url(account_id)
+    url = os.getenv(info.get("base_url_env", ""), "").strip() or info["base_url"]
+    return "" if "<" in url or ">" in url else url
+
+
+def cloudflare_base_url(account_id: str) -> str:
+    account_id = account_id.strip()
+    if not account_id:
+        return ""
+    return f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1"
+
+
 @dataclass(frozen=True)
 class MatchingConfig:
     fuzzy_threshold: int = 80
@@ -32,20 +66,53 @@ PROVIDERS = {
     "openrouter": {
         "base_url": "https://openrouter.ai/api/v1",
         "env_key": "OPENROUTER_API_KEY",
-        "env_keys": ["OPENROUTER_API_KEY"],
+        "env_keys": numbered_env_keys("OPENROUTER_API_KEY"),
         "default_model": "openai/gpt-4o-mini",
     },
     "opencode": {
         "base_url": "https://opencode.ai/zen/v1",
         "env_key": "OPENCODE_API_KEY",
-        "env_keys": ["OPENCODE_API_KEY_1", "OPENCODE_API_KEY_2", "OPENCODE_API_KEY"],
+        "env_keys": numbered_env_keys("OPENCODE_API_KEY"),
         "default_model": "big-pickle",
     },
     "groq": {
         "base_url": "https://api.groq.com/openai/v1",
         "env_key": "GROQ_API_KEY",
-        "env_keys": ["GROQ_API_KEY_1", "GROQ_API_KEY"],
+        "env_keys": numbered_env_keys("GROQ_API_KEY"),
         "default_model": "openai/gpt-oss-120b",
+    },
+    "github": {
+        "base_url": "https://models.github.ai/inference",
+        "env_key": "GITHUB_API_KEY",
+        "env_keys": numbered_env_keys("GITHUB_API_KEY"),
+        "default_model": "openai/gpt-4.1-mini",
+    },
+    "cloudflare": {
+        "base_url": "",
+        "base_url_env": "CLOUDFLARE_BASE_URL",
+        "account_id_env": "CLOUDFLARE_ACCOUNT_ID",
+        "account_id_envs": numbered_env_keys("CLOUDFLARE_ACCOUNT_ID", include_legacy=False),
+        "env_key": "CLOUDFLARE_API_TOKEN",
+        "env_keys": numbered_env_keys("CLOUDFLARE_API_TOKEN"),
+        "default_model": "@cf/openai/gpt-oss-120b",
+    },
+    "cerebras": {
+        "base_url": "https://api.cerebras.ai/v1",
+        "env_key": "CEREBRAS_API_KEY",
+        "env_keys": numbered_env_keys("CEREBRAS_API_KEY"),
+        "default_model": "gpt-oss-120b",
+    },
+    "google": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+        "env_key": "GOOGLE_API_KEY",
+        "env_keys": numbered_env_keys("GOOGLE_API_KEY", count=4),
+        "default_model": "gemini-2.5-flash",
+    },
+    "mistral": {
+        "base_url": "https://api.mistral.ai/v1",
+        "env_key": "MISTRAL_API_KEY",
+        "env_keys": numbered_env_keys("MISTRAL_API_KEY"),
+        "default_model": "mistral-small-latest",
     },
     "rotation": {
         "base_url": "",
@@ -81,25 +148,14 @@ def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -
         # Deduplicate while preserving order
         seen = set()
         unique_keys = tuple(k for k in all_keys if k not in seen and not seen.add(k))
-        url = p["base_url"]
+        url = provider_base_url(p)
         mdl = model or os.getenv("AI_MODEL", "") or p["default_model"]
         return {"api_key": key, "api_keys": unique_keys, "base_url": url, "model": mdl, "fallback_models": fallback_models}
     # No provider: use env vars or .env
     key = api_key or os.getenv("OPENROUTER_API_KEY", "")
     url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     mdl = model or os.getenv("AI_MODEL", "openai/gpt-4o-mini")
-    all_keys = tuple(
-        k for k in (
-            api_key,
-            os.getenv("OPENCODE_API_KEY_1", ""),
-            os.getenv("OPENCODE_API_KEY_2", ""),
-            os.getenv("OPENCODE_API_KEY", ""),
-            os.getenv("GROQ_API_KEY_1", ""),
-            os.getenv("GROQ_API_KEY", ""),
-            os.getenv("OPENROUTER_API_KEY", ""),
-            os.getenv("CUSTOM_API_KEY", ""),
-        ) if k
-    )
+    all_keys = tuple(k for k in (api_key, *configured_env_key_values()) if k)
     seen = set()
     unique_keys = tuple(k for k in all_keys if k not in seen and not seen.add(k))
     return {"api_key": key, "api_keys": unique_keys, "base_url": url, "model": mdl, "fallback_models": fallback_models}
@@ -109,15 +165,7 @@ def resolve_api_config(provider: str = "", model: str = "", api_key: str = "") -
 class APIConfig:
     api_key: str = field(default_factory=lambda: os.getenv("OPENROUTER_API_KEY", ""))
     api_keys: tuple = field(default_factory=lambda: tuple(
-        k for k in (
-            os.getenv("OPENCODE_API_KEY_1", ""),
-            os.getenv("OPENCODE_API_KEY_2", ""),
-            os.getenv("OPENCODE_API_KEY", ""),
-            os.getenv("GROQ_API_KEY_1", ""),
-            os.getenv("GROQ_API_KEY", ""),
-            os.getenv("OPENROUTER_API_KEY", ""),
-            os.getenv("CUSTOM_API_KEY", ""),
-        ) if k
+        k for k in configured_env_key_values() if k
     ))
     base_url: str = field(default_factory=lambda: os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"))
     model: str = field(default_factory=lambda: os.getenv("AI_MODEL", "openai/gpt-4o-mini"))
