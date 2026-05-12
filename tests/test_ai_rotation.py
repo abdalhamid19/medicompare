@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from drug_matcher.ai_rotation import (
@@ -15,10 +17,14 @@ from drug_matcher.ai_rotation import (
 from drug_matcher.ai_rotation_health import rank_health_rows
 from drug_matcher.ai_rotation_health import attempts_from_health
 from drug_matcher.ai_rotation_health import attempts_from_partial_health
+from drug_matcher.ai_rotation_health import cached_working_attempts
+from drug_matcher.ai_rotation_health import load_latest_rotation_health
 from drug_matcher.ai_rotation_health import select_preflight_attempts
+from drug_matcher import ai_rotation_health
 from drug_matcher.config import PROVIDERS
 from run_matcher import _rotation_api_config
 from run_matcher import _smart_preflight_enough
+from run_matcher import _smart_preflight_attempts
 
 
 class AIRotationTests(unittest.TestCase):
@@ -299,6 +305,32 @@ class AIRotationTests(unittest.TestCase):
         self.assertEqual(selected[:2], (healthy, untested))
         self.assertEqual(selected[-1], failed)
 
+    def test_cached_working_attempts_maps_recent_rows_to_attempts(self):
+        attempt = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "key111111", "strong", 1, rotation_tier=1,
+        )
+        rows = [{
+            "ok": True, "mode": "json", "provider": "groq",
+            "key_suffix": "111111", "model": "strong",
+        }]
+
+        selected = cached_working_attempts((attempt,), rows, limit=5)
+
+        self.assertEqual(selected, (attempt,))
+
+    def test_load_latest_rotation_health_ignores_corrupt_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            bad = out_dir / "ai_rotation_test_20260101_000000.json"
+            bad.write_text("{bad", encoding="utf-8")
+            good = out_dir / "ai_rotation_test_20260101_000001.json"
+            good.write_text('[{"ok": true}]', encoding="utf-8")
+            with patch.object(ai_rotation_health, "OUT_DIR", out_dir):
+                rows = load_latest_rotation_health(3600)
+
+        self.assertEqual(rows, [{"ok": True}])
+
     def test_rotation_api_config_builds_separate_review_plan(self):
         primary = AIModelAttempt(
             "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY_1",
@@ -326,6 +358,28 @@ class AIRotationTests(unittest.TestCase):
         self.assertTrue(_smart_preflight_enough(rows, 3, 3))
         self.assertFalse(_smart_preflight_enough(rows[:2], 3, 2))
         self.assertFalse(_smart_preflight_enough(rows, 3, 4))
+
+    def test_smart_preflight_attempts_refreshes_cached_plus_uncached(self):
+        cached = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "key111111", "cached", 1, rotation_tier=1,
+        )
+        uncached = AIModelAttempt(
+            "mistral", "url", "MISTRAL_API_KEY_1",
+            "key222222", "uncached", 1, rotation_tier=1,
+        )
+        rows = [{
+            "ok": True, "mode": "json", "provider": "groq",
+            "key_suffix": "111111", "model": "cached",
+        }]
+        with patch("run_matcher.load_latest_rotation_health", return_value=rows):
+            selected, cache_rows = _smart_preflight_attempts(
+                (cached, uncached), budget=2, tier_limit=1,
+                cache_ttl=3600, refresh=1,
+            )
+
+        self.assertEqual(selected, (cached, uncached))
+        self.assertEqual(cache_rows, rows)
 
 
 if __name__ == "__main__":

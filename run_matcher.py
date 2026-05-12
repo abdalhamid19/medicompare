@@ -9,6 +9,8 @@ from drug_matcher.ai_rotation import configured_attempts
 from drug_matcher.ai_rotation_health import (
     attempts_from_partial_health,
     attempts_from_health,
+    cached_working_attempts,
+    load_latest_rotation_health,
     run_rotation_health,
     select_preflight_attempts,
     write_rotation_reports,
@@ -45,6 +47,8 @@ def parse_args():
     parser.add_argument("--rotation-preflight-min-healthy", type=int, default=24, help="Minimum healthy attempts targeted by smart preflight")
     parser.add_argument("--rotation-preflight-min-providers", type=int, default=3, help="Minimum healthy providers targeted by smart preflight")
     parser.add_argument("--rotation-preflight-tier-limit", type=int, default=1, help="Highest model tier to test in smart preflight")
+    parser.add_argument("--rotation-preflight-cache-ttl", type=float, default=21600.0, help="Seconds to reuse latest rotation preflight report")
+    parser.add_argument("--rotation-preflight-refresh", type=int, default=10, help="Cached working attempts to refresh during smart preflight")
     return parser.parse_args()
 
 
@@ -126,10 +130,32 @@ def _smart_preflight_enough(rows, min_healthy, min_providers):
     return len(healthy) >= min_healthy and len(providers) >= min_providers
 
 
+def _smart_preflight_attempts(
+    attempts, budget, tier_limit, cache_ttl, refresh,
+):
+    cache_rows = load_latest_rotation_health(cache_ttl)
+    cached = cached_working_attempts(attempts, cache_rows, refresh)
+    remaining = max(0, budget - len(cached))
+    cached_keys = {attempt.safe_tuple() for attempt in cached}
+    uncached = tuple(
+        attempt for attempt in attempts if attempt.safe_tuple() not in cached_keys
+    )
+    sampled = select_preflight_attempts(uncached, remaining, tier_limit)
+    selected = []
+    seen = set()
+    for attempt in (*cached, *sampled):
+        key = attempt.safe_tuple()
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(attempt)
+    return tuple(selected), cache_rows
+
+
 async def _preflight_rotation(
     api_cfg, timeout, trace=None, concurrency=4,
     policy="smart", budget=60, min_healthy=24, min_providers=3,
-    tier_limit=1,
+    tier_limit=1, cache_ttl=21600.0, refresh=10,
 ):
     attempts = tuple(api_cfg.attempt_plan)
     if not attempts:
@@ -137,9 +163,10 @@ async def _preflight_rotation(
     if policy == "off":
         return api_cfg
     preflight_attempts = attempts
+    cache_rows = []
     if policy == "smart":
-        preflight_attempts = select_preflight_attempts(
-            attempts, budget, tier_limit,
+        preflight_attempts, cache_rows = _smart_preflight_attempts(
+            attempts, budget, tier_limit, cache_ttl, refresh,
         )
     if trace and trace.enabled:
         trace.log_rotation_preflight_start(len(preflight_attempts))
@@ -148,9 +175,10 @@ async def _preflight_rotation(
         max_tokens=min(api_cfg.max_tokens, 256),
         concurrency=max(1, min(len(preflight_attempts), concurrency)),
     )
+    merged_rows = rows + cache_rows
     write_rotation_reports(rows)
     selected = (
-        attempts_from_partial_health(attempts, rows)
+        attempts_from_partial_health(attempts, merged_rows)
         if policy == "smart" else attempts_from_health(attempts, rows)
     )
     if trace and trace.enabled:
@@ -184,7 +212,8 @@ async def _preflight_api(
     api_cfg, timeout, trace=None, concurrency=4,
     rotation_policy="smart", rotation_budget=60,
     rotation_min_healthy=24, rotation_min_providers=3,
-    rotation_tier_limit=1,
+    rotation_tier_limit=1, rotation_cache_ttl=21600.0,
+    rotation_refresh=10,
 ):
     if api_cfg.attempt_plan:
         return await _preflight_rotation(
@@ -194,6 +223,8 @@ async def _preflight_api(
             min_healthy=rotation_min_healthy,
             min_providers=rotation_min_providers,
             tier_limit=rotation_tier_limit,
+            cache_ttl=rotation_cache_ttl,
+            refresh=rotation_refresh,
         )
     keys = _key_items(api_cfg.api_keys)
     models = dedupe(
@@ -274,6 +305,8 @@ def main():
                 rotation_min_healthy=args.rotation_preflight_min_healthy,
                 rotation_min_providers=args.rotation_preflight_min_providers,
                 rotation_tier_limit=args.rotation_preflight_tier_limit,
+                rotation_cache_ttl=args.rotation_preflight_cache_ttl,
+                rotation_refresh=args.rotation_preflight_refresh,
             )
         )
 

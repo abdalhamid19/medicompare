@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -129,6 +130,44 @@ def write_rotation_reports(rows: list[dict]) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return csv_path, json_path
+
+
+def load_latest_rotation_health(max_age_s: float) -> list[dict]:
+    if max_age_s <= 0 or not OUT_DIR.exists():
+        return []
+    paths = sorted(OUT_DIR.glob("ai_rotation_test_*.json"), reverse=True)
+    now = time.time()
+    for path in paths:
+        if now - path.stat().st_mtime > max_age_s:
+            continue
+        try:
+            rows = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(rows, list):
+            return [row for row in rows if isinstance(row, dict)]
+    return []
+
+
+def cached_working_attempts(
+    attempts: tuple[AIModelAttempt, ...],
+    rows: list[dict],
+    limit: int,
+) -> tuple[AIModelAttempt, ...]:
+    if limit <= 0:
+        return ()
+    by_key = {attempt.safe_tuple(): attempt for attempt in attempts}
+    out = []
+    for row in rank_health_rows(list(rows)):
+        if row.get("mode") != "json" or not row.get("ok"):
+            continue
+        attempt = by_key.get(_row_key(row))
+        if not attempt:
+            continue
+        out.append(attempt)
+        if len(out) >= limit:
+            break
+    return tuple(_dedupe_attempts(out))
 
 
 def attempts_from_health(
