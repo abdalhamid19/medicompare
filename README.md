@@ -123,6 +123,8 @@ python run_tests.py
 | `--log-level` | مستوى السجلات (DEBUG, INFO, WARNING, ERROR) | INFO |
 | `--threshold` | حد المطابقة الخوارزمية | 80 |
 | `--ai-threshold` | حد إحالة المطابقات للـ AI | 90.0 |
+| `--ai-verify-policy` | سياسة اختيار المطابقات للمراجعة: `score`, `fuzzy`, `all-non-exact`, `all` | score |
+| `--ai-verify-limit N` | أقصى عدد matched rows يدخل AI verification | بلا حد |
 | `--output` | مسار ملف الإخراج | output/matched_drugs_verified.csv |
 | `--trace` | تتبع تفصيلي لكل خطوة (CSV+TXT في output/trace/) | معطل |
 | `--no-ai` | تخطي AI (مطابقة خوارزمية فقط بدون تحقق أو بحث) | معطل |
@@ -134,6 +136,10 @@ python run_tests.py
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
 | `--ai-timeout` | مهلة اختبار كل model/key في preflight بالثواني | 10 |
 | `--ai-search-limit N` | أقصى عدد unmatched يدخل مرحلة AI search | بلا حد |
+| `--ai-search-policy` | توسيع AI search: `safe`, `expanded`, `aggressive` | safe |
+| `--ai-search-min-candidate-score` | أقل score للمرشح قبل إرساله للـ AI search | حسب policy |
+| `--ai-search-candidate-limit` | عدد candidates لكل استراتيجية بحث قبل AI search | حسب policy |
+| `--ai-search-accept-confidence` | أقل ثقة لقبول match ناتج من AI search | 0.75 |
 | `--rotation-preflight-policy` | سياسة preflight للـ rotation: `smart`, `full`, `off` | smart |
 | `--rotation-preflight-budget` | أقصى عدد rotation attempts يختبرها smart preflight | 60 |
 | `--rotation-preflight-cache-ttl` | مدة إعادة استخدام آخر تقرير rotation health بالثواني | 21600 |
@@ -153,6 +159,15 @@ python run_matcher.py --provider rotation --trace --ai-search-limit 200
 ```
 
 مرحلة AI search لا ترسل كل `no_match` إلى النموذج. يتم إرسال الحالات التي لديها مرشحين أقوياء وآمنين فقط، مع الاحتفاظ بقواعد الرفض الخوارزمية مثل اختلاف الشكل أو الجرعة أو route أو imported/local.
+
+لزيادة عدد الحالات التي تدخل AI بدون فتحها عشوائياً:
+
+```bash
+python run_matcher.py --provider rotation --trace --concurrency 4 \
+  --ai-threshold 95 --ai-verify-policy fuzzy \
+  --ai-search-policy expanded --ai-search-min-candidate-score 75 \
+  --ai-search-candidate-limit 10 --ai-search-accept-confidence 0.75
+```
 
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج
 افتراضياً `smart` preflight فيختبر عينة محدودة ومتوازنة من attempts بدل

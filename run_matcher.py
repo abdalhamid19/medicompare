@@ -30,6 +30,8 @@ def parse_args():
     parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"], help="Logging level")
     parser.add_argument("--threshold", type=int, default=80, help="Fuzzy matching threshold (default: 80)")
     parser.add_argument("--ai-threshold", type=float, default=90.0, help="AI verification threshold (default: 90)")
+    parser.add_argument("--ai-verify-policy", choices=["score", "fuzzy", "all-non-exact", "all"], default="score", help="AI verification selection policy")
+    parser.add_argument("--ai-verify-limit", type=int, default=None, help="Maximum matched rows to send through AI verification")
     parser.add_argument("--output", default=None, help="Output CSV path")
     parser.add_argument("--trace", action="store_true", help="Enable detailed algorithm trace (CSV+TXT in output/trace/)")
     parser.add_argument("--no-ai", action="store_true", help="Skip AI verification and search (algorithm only)")
@@ -41,6 +43,10 @@ def parse_args():
     parser.add_argument("--no-ai-preflight", action="store_true", help="Skip AI health preflight")
     parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
     parser.add_argument("--ai-search-limit", type=int, default=None, help="Maximum unmatched rows to send through AI search")
+    parser.add_argument("--ai-search-policy", choices=["safe", "expanded", "aggressive"], default="safe", help="AI search expansion policy")
+    parser.add_argument("--ai-search-min-candidate-score", type=float, default=None, help="Minimum candidate score before AI search")
+    parser.add_argument("--ai-search-accept-confidence", type=float, default=None, help="Minimum AI confidence to accept search match")
+    parser.add_argument("--ai-search-candidate-limit", type=int, default=None, help="Candidate limit per search strategy before AI search")
     parser.add_argument("--concurrency", type=int, default=None, help="Maximum concurrent AI requests and preflight checks")
     parser.add_argument("--rotation-preflight-policy", choices=["smart", "full", "off"], default="smart", help="Rotation preflight policy")
     parser.add_argument("--rotation-preflight-budget", type=int, default=60, help="Maximum rotation attempts to test in smart preflight")
@@ -50,6 +56,23 @@ def parse_args():
     parser.add_argument("--rotation-preflight-cache-ttl", type=float, default=21600.0, help="Seconds to reuse latest rotation preflight report")
     parser.add_argument("--rotation-preflight-refresh", type=int, default=10, help="Cached working attempts to refresh during smart preflight")
     return parser.parse_args()
+
+
+def _search_policy_values(args):
+    defaults = {
+        "safe": (80.0, 0.75, 5),
+        "expanded": (75.0, 0.75, 10),
+        "aggressive": (70.0, 0.75, 15),
+    }
+    min_score, confidence, limit = defaults[args.ai_search_policy]
+    return (
+        args.ai_search_min_candidate_score
+        if args.ai_search_min_candidate_score is not None else min_score,
+        args.ai_search_accept_confidence
+        if args.ai_search_accept_confidence is not None else confidence,
+        args.ai_search_candidate_limit
+        if args.ai_search_candidate_limit is not None else limit,
+    )
 
 
 def _key_items(keys: tuple[str, ...]) -> list[AIKey]:
@@ -263,16 +286,25 @@ def main():
     setup_logging(args.log_level)
     load_env()
     ai_concurrency = max(1, args.concurrency or 5)
+    search_min_score, search_confidence, search_candidate_limit = (
+        _search_policy_values(args)
+    )
 
     match_cfg = MatchingConfig(
         fuzzy_threshold=args.threshold,
         brand_prefix_min=4,
         ai_verify_threshold=args.ai_threshold,
+        ai_verify_policy=args.ai_verify_policy,
+        ai_verify_limit=args.ai_verify_limit,
         ai_batch_size=20,
         ai_max_concurrent=ai_concurrency,
         top_k_candidates=10,
         ai_review_threshold=args.review_threshold if args.review_threshold is not None else 0.95,
         ai_search_limit=args.ai_search_limit,
+        ai_search_policy=args.ai_search_policy,
+        ai_search_min_candidate_score=search_min_score,
+        ai_search_accept_confidence=search_confidence,
+        ai_search_candidate_limit=search_candidate_limit,
     )
 
     if args.provider == "rotation":

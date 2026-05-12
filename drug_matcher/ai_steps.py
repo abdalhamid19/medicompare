@@ -14,8 +14,12 @@ from .verifier import AIVerifier
 logger = logging.getLogger("medicompare")
 
 _AI_SEARCH_ACCEPT_CONFIDENCE = 0.75
-_AI_SEARCH_MIN_CANDIDATE_SCORE = 80.0
 _AI_REVIEW_OVERRIDE_CONFIDENCE = 0.75
+_FUZZY_VERIFY_METHODS = frozenset((
+    "token_set_ratio",
+    "token_sort_ratio",
+    "partial_token_sort_ratio",
+))
 
 
 def _internal_value(results: pd.DataFrame, idx, col: str, default=""):
@@ -214,7 +218,24 @@ async def run_ai_search(
 def _select_for_verification(results, cfg):
     matched = results[results["matched_product_name_en"] != ""].copy()
     scores = pd.to_numeric(matched["match_score"], errors="coerce")
-    return matched[scores < cfg.ai_verify_threshold]
+    policy = getattr(cfg, "ai_verify_policy", "score")
+    methods = matched["match_method"].fillna("")
+    if policy == "all":
+        selected = matched
+    elif policy == "all-non-exact":
+        selected = matched[
+            ~((methods == "component_index") & (scores >= 100.0))
+        ]
+    elif policy == "fuzzy":
+        selected = matched[
+            (scores < cfg.ai_verify_threshold) |
+            methods.isin(_FUZZY_VERIFY_METHODS)
+        ]
+    else:
+        selected = matched[scores < cfg.ai_verify_threshold]
+    if cfg.ai_verify_limit is not None:
+        selected = selected.head(cfg.ai_verify_limit)
+    return selected
 
 
 def _build_verify_items(to_verify):
@@ -436,7 +457,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 code, drug_name, norm, parsed.brand,
                 (
                     "ai_search_skipped_not_eligible: "
-                    f"no candidate >= {_AI_SEARCH_MIN_CANDIDATE_SCORE}"
+                    f"no candidate >= {cfg.ai_search_min_candidate_score}"
                     " with safe components"
                 ),
                 row_index=row.name,
@@ -462,7 +483,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
     confidence = ai_result.get("confidence", 0) if ai_result else 0
     if (
         ai_result and ai_result.get("record")
-        and confidence >= _AI_SEARCH_ACCEPT_CONFIDENCE
+        and confidence >= cfg.ai_search_accept_confidence
     ):
         match_name = ai_result["record"]["product_name_en"]
         _apply_search_result(results, row.name, ai_result)
@@ -472,19 +493,21 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 True, match_name, confidence,
                 model_used=ai_result.get("model_used", ""),
                 api_failures=verifier.get_fallback_log(),
-                accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
+                accept_threshold=cfg.ai_search_accept_confidence,
                 row_index=row.name,
                 parse_failed=ai_result.get("parse_failed", False),
             )
         return 1
     if trace and trace.enabled:
-        error_code = _search_error_code(ai_result, confidence)
+        error_code = _search_error_code(
+            ai_result, confidence, cfg.ai_search_accept_confidence,
+        )
         trace.log_ai_search_result(
             code, drug_name, norm, parsed.brand,
             False, None, confidence,
             model_used=ai_result.get("model_used", "") if ai_result else "",
             api_failures=verifier.get_fallback_log(),
-            accept_threshold=_AI_SEARCH_ACCEPT_CONFIDENCE,
+            accept_threshold=cfg.ai_search_accept_confidence,
             row_index=row.name,
             error_code=error_code,
             parse_failed=ai_result.get("parse_failed", False) if ai_result else False,
@@ -492,7 +515,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
     return 0
 
 
-def _search_error_code(ai_result, confidence) -> str:
+def _search_error_code(ai_result, confidence, accept_confidence) -> str:
     if not ai_result:
         return "no_ai_result"
     if ai_result.get("error_code"):
@@ -501,7 +524,7 @@ def _search_error_code(ai_result, confidence) -> str:
         return "invalid_json"
     if ai_result.get("best_index", 0) == 0:
         return "best_index_0"
-    if confidence < _AI_SEARCH_ACCEPT_CONFIDENCE:
+    if confidence < accept_confidence:
         return "confidence_below_threshold"
     return "no_record"
 
@@ -524,12 +547,13 @@ def _trace_search_exception(trace, row, exc):
 def _search_candidates(parsed, norm, index, cfg, price=None):
     """Gather fuzzy + brand candidates for unmatched search."""
     candidates = []
-    for idx, score in index.get_candidates(parsed, limit=5, price=price):
+    limit = cfg.ai_search_candidate_limit
+    for idx, score in index.get_candidates(parsed, limit=limit, price=price):
         candidates.append((index.get_record(idx), score, idx))
     for scorer in [fuzz.token_set_ratio, fuzz.token_sort_ratio]:
         results = process.extract(
             norm, index.norms,
-            scorer=scorer, limit=5,
+            scorer=scorer, limit=limit,
         )
         for _, score, idx in results:
             if score >= 70 and components_match(
@@ -554,7 +578,7 @@ def _eligible_search_candidates(parsed, candidates, index, cfg):
             parsed, index.get_parsed(idx),
             cfg.brand_prefix_min,
         )
-        if ok and score >= _AI_SEARCH_MIN_CANDIDATE_SCORE:
+        if ok and score >= cfg.ai_search_min_candidate_score:
             eligible.append((rec, score, idx))
     return eligible
 

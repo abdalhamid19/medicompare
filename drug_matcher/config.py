@@ -61,6 +61,12 @@ class MatchingConfig:
     top_k_candidates: int = 10
     ai_review_threshold: float = 0.8  # review AI decisions with confidence below this
     ai_search_limit: int | None = None
+    ai_verify_policy: str = "score"
+    ai_verify_limit: int | None = None
+    ai_search_policy: str = "safe"
+    ai_search_min_candidate_score: float = 80.0
+    ai_search_accept_confidence: float = 0.75
+    ai_search_candidate_limit: int = 5
 
 PROVIDERS = {
     "openrouter": {

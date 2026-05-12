@@ -120,6 +120,66 @@ class TestSelectForVerification(unittest.TestCase):
         selected = _select_for_verification(results, cfg)
         self.assertEqual(len(selected), 0)
 
+    def test_fuzzy_policy_selects_fuzzy_matches_above_threshold(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL",
+                "matched_product_name_en": "PANADOL 20 TAB",
+                "matched_product_name_ar": "بانادول",
+                "matched_store_product_id": "T-3",
+                "match_score": 96.0, "verified": "algo_match",
+                "match_method": "token_set_ratio",
+            },
+        ])
+        cfg = MatchingConfig(ai_verify_threshold=90.0, ai_verify_policy="fuzzy")
+
+        selected = _select_for_verification(results, cfg)
+
+        self.assertEqual(len(selected), 1)
+
+    def test_all_non_exact_policy_skips_only_exact_component_matches(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL",
+                "matched_product_name_en": "PANADOL 20 TAB",
+                "matched_product_name_ar": "بانادول",
+                "matched_store_product_id": "T-3",
+                "match_score": 100.0, "verified": "algo_match",
+                "match_method": "component_index",
+            },
+            {
+                "code": "D2", "drug_name": "AUGMENTIN",
+                "matched_product_name_en": "AUGMENTIN 625 MG 10 TAB",
+                "matched_product_name_ar": "اوجمنتين",
+                "matched_store_product_id": "T-1",
+                "match_score": 100.0, "verified": "algo_match",
+                "match_method": "brand_index",
+            },
+        ])
+        cfg = MatchingConfig(ai_verify_policy="all-non-exact")
+
+        selected = _select_for_verification(results, cfg)
+
+        self.assertEqual(list(selected["code"]), ["D2"])
+
+    def test_verify_limit_caps_selected_rows(self):
+        results = _make_results([
+            {
+                "code": f"D{i}", "drug_name": "PANADOL",
+                "matched_product_name_en": "PANADOL 20 TAB",
+                "matched_product_name_ar": "بانادول",
+                "matched_store_product_id": "T-3",
+                "match_score": 80.0, "verified": "algo_match",
+                "match_method": "brand_index",
+            }
+            for i in range(3)
+        ])
+        cfg = MatchingConfig(ai_verify_limit=2)
+
+        selected = _select_for_verification(results, cfg)
+
+        self.assertEqual(len(selected), 2)
+
 
 class TestBuildVerifyItems(unittest.TestCase):
     def test_builds_items_with_idx(self):
@@ -660,6 +720,44 @@ class TestRunAiSearchWithMock(unittest.TestCase):
             )
         self.assertEqual(out.at[0, "matched_product_name_en"], "")
 
+    def test_lower_search_accept_confidence_accepts_borderline_result(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "PANADOL EXTRA 24 TAB",
+                "matched_product_name_en": "",
+                "matched_product_name_ar": "",
+                "matched_store_product_id": "",
+                "match_score": "", "verified": "",
+                "match_method": "no_match",
+            },
+        ])
+        index = _make_index()
+        cfg = MatchingConfig(
+            fuzzy_threshold=70,
+            ai_search_accept_confidence=0.7,
+        )
+        api_cfg = APIConfig(api_key="test-key")
+
+        mock_verifier = AsyncMock()
+        mock_verifier.__aenter__ = AsyncMock(return_value=mock_verifier)
+        mock_verifier.__aexit__ = AsyncMock(return_value=None)
+        mock_verifier.find_better_match = AsyncMock(return_value={
+            "record": {
+                "product_name_en": "PANADOL EXTRA 24 TAB",
+                "product_name_ar": "بانادول اكسترا",
+                "store_product_id": "T-2",
+            },
+            "score": 85.0,
+            "confidence": 0.72,
+        })
+
+        with patch("drug_matcher.ai_steps.AIVerifier", return_value=mock_verifier):
+            out = asyncio.run(
+                run_ai_search(results, index, cfg, api_cfg)
+            )
+
+        self.assertEqual(out.at[0, "verified"], "ai_found")
+
     def test_ai_search_limit_skips_extra_rows(self):
         results = _make_results([
             {
@@ -714,6 +812,16 @@ class TestAiSearchEligibility(unittest.TestCase):
 
         self.assertEqual(eligible, [])
 
+    def test_lower_candidate_threshold_keeps_more_candidates(self):
+        index = _make_index()
+        parsed = index.get_parsed(0)
+        candidates = [(index.get_record(0), 75.0, 0)]
+        cfg = MatchingConfig(ai_search_min_candidate_score=75.0)
+
+        eligible = _eligible_search_candidates(parsed, candidates, index, cfg)
+
+        self.assertEqual(len(eligible), 1)
+
     def test_keeps_high_score_safe_candidates(self):
         index = _make_index()
         parsed = index.get_parsed(2)
@@ -724,6 +832,17 @@ class TestAiSearchEligibility(unittest.TestCase):
         )
 
         self.assertEqual(len(eligible), 1)
+
+    def test_search_candidate_limit_expands_candidates(self):
+        index = _make_index()
+        parsed = index.get_parsed(2)
+        cfg = MatchingConfig(ai_search_candidate_limit=10)
+
+        candidates = _search_candidates(
+            parsed, "PANADOL EXTRA 24 TAB", index, cfg,
+        )
+
+        self.assertGreaterEqual(len(candidates), 2)
 
 
 class TestApplyReviewResults(unittest.TestCase):
