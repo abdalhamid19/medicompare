@@ -14,6 +14,8 @@ from drug_matcher.ai_rotation import (
 )
 from drug_matcher.ai_rotation_health import rank_health_rows
 from drug_matcher.ai_rotation_health import attempts_from_health
+from drug_matcher.ai_rotation_health import attempts_from_partial_health
+from drug_matcher.ai_rotation_health import select_preflight_attempts
 from drug_matcher.config import PROVIDERS
 from run_matcher import _rotation_api_config
 
@@ -245,6 +247,56 @@ class AIRotationTests(unittest.TestCase):
         selected = attempts_from_health(attempts, rows)
 
         self.assertEqual(selected, attempts)
+
+    def test_select_preflight_attempts_limits_budget_and_balances_providers(self):
+        attempts = tuple(
+            AIModelAttempt(
+                provider, "url", f"{provider.upper()}_API_KEY_1",
+                f"key-{provider}-{rank:06d}", f"{provider}-model-{rank}",
+                rank, rotation_tier=1 if rank <= 2 else 2,
+            )
+            for provider in ("groq", "github", "mistral")
+            for rank in range(1, 5)
+        )
+
+        selected = select_preflight_attempts(attempts, budget=5, tier_limit=1)
+
+        self.assertEqual(len(selected), 5)
+        self.assertTrue(all(attempt.rotation_tier == 1 for attempt in selected))
+        self.assertEqual(
+            [attempt.provider for attempt in selected[:3]],
+            ["github", "groq", "mistral"],
+        )
+
+    def test_attempts_from_partial_health_keeps_untested_fallbacks(self):
+        healthy = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "key111111", "strong", 1, rotation_tier=1,
+        )
+        untested = AIModelAttempt(
+            "mistral", "url", "MISTRAL_API_KEY_1",
+            "key222222", "backup", 1, rotation_tier=1,
+        )
+        failed = AIModelAttempt(
+            "github", "url", "GITHUB_API_KEY_1",
+            "key333333", "blocked", 1, rotation_tier=1,
+        )
+        rows = rank_health_rows([
+            {
+                "ok": True, "mode": "json", "provider": "groq",
+                "key_suffix": "111111", "model": "strong",
+            },
+            {
+                "ok": False, "mode": "json", "provider": "github",
+                "key_suffix": "333333", "model": "blocked",
+                "http_status": 403, "error_type": "http_403",
+            },
+        ])
+
+        selected = attempts_from_partial_health((healthy, untested, failed), rows)
+
+        self.assertEqual(selected[:2], (healthy, untested))
+        self.assertEqual(selected[-1], failed)
 
     def test_rotation_api_config_builds_separate_review_plan(self):
         primary = AIModelAttempt(
