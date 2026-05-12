@@ -221,6 +221,7 @@ class AIModelAttempt:
     quota_remaining: float = 0.0
     eligible: bool = True
     disabled_until: str = ""
+    rotation_tier: int = 1
 
     @property
     def key_suffix(self) -> str:
@@ -251,6 +252,7 @@ def _balanced_sort_key(attempt: AIModelAttempt):
     return (
         not attempt.eligible,
         bool(attempt.disabled_until),
+        attempt.rotation_tier,
         attempt.quality_rank,
         quota_sort,
         attempt.latency,
@@ -271,6 +273,7 @@ def _provider_attempts(provider: str) -> list[AIModelAttempt]:
     keys = _provider_keys(provider, info)
     models = _provider_models(provider, info)
     attempts = []
+    model_count = len(models)
     for key_name, key_value in keys:
         base_url = _provider_base_url(provider, info, key_name)
         if not base_url:
@@ -284,9 +287,22 @@ def _provider_attempts(provider: str) -> list[AIModelAttempt]:
                     api_key=key_value,
                     model=model,
                     quality_rank=rank,
+                    rotation_tier=_model_tier(rank, model_count),
                 )
             )
     return attempts
+
+
+def _model_tier(rank: int, model_count: int) -> int:
+    if model_count <= 0:
+        return 3
+    first_end = (model_count + 2) // 3
+    second_end = (model_count * 2 + 2) // 3
+    if rank <= first_end:
+        return 1
+    if rank <= second_end:
+        return 2
+    return 3
 
 
 def _cloudflare_account_ids(info: dict) -> dict[str, str]:

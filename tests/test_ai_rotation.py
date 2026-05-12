@@ -8,6 +8,7 @@ from drug_matcher.ai_rotation import (
     AIModelAttempt,
     DEFAULT_MODELS,
     PROVIDER_ORDER,
+    _model_tier,
     configured_attempts,
     rank_attempts,
 )
@@ -36,7 +37,18 @@ class AIRotationTests(unittest.TestCase):
                 self.assertIn(provider, PROVIDERS)
                 self.assertIn(provider, PROVIDER_ORDER)
                 self.assertIn(key_name, PROVIDERS[provider]["env_keys"])
-                self.assertIn(model, DEFAULT_MODELS[provider])
+                normalized = {m.removeprefix("models/") for m in DEFAULT_MODELS[provider]}
+                self.assertIn(model.removeprefix("models/"), normalized)
+
+    def test_model_tiers_split_default_models_into_thirds(self):
+        tiers = [
+            _model_tier(rank, len(DEFAULT_MODELS["groq"]))
+            for rank, _ in enumerate(DEFAULT_MODELS["groq"], start=1)
+        ]
+
+        self.assertEqual(tiers[:3], [1, 1, 1])
+        self.assertEqual(tiers[3:6], [2, 2, 2])
+        self.assertEqual(tiers[6:], [3, 3, 3])
 
     def test_configured_attempts_reads_multiple_keys_for_new_provider(self):
         env = {
@@ -109,6 +121,22 @@ class AIRotationTests(unittest.TestCase):
 
         self.assertEqual(ranked[0].model, "strong")
         self.assertEqual(ranked[-1].model, "disabled")
+
+    def test_balanced_ranking_keeps_high_tier_before_lower_tier(self):
+        attempts = [
+            AIModelAttempt(
+                "groq", "url", "k", "key111111", "tier-two", 4,
+                quota_remaining=1000, rotation_tier=2,
+            ),
+            AIModelAttempt(
+                "groq", "url", "k", "key222222", "tier-one", 3,
+                quota_remaining=1, rotation_tier=1,
+            ),
+        ]
+
+        ranked = rank_attempts(attempts)
+
+        self.assertEqual(ranked[0].model, "tier-one")
 
     def test_health_rows_are_ranked_with_score(self):
         rows = [
