@@ -592,14 +592,17 @@ class MatchTraceLog:
             counts[key] = counts.get(key, 0) + 1
         return "; ".join(f"{k}:{v}" for k, v in sorted(counts.items()))
 
-    def log_rotation_preflight_start(self, attempts_count):
+    def log_rotation_preflight_start(self, attempts_count, detail=""):
+        reason = f"testing {attempts_count} provider/key/model attempts"
+        if detail:
+            reason = f"{reason}; {detail}"
         self._append(
             "", "", "", "",
             step="rotation_preflight_start",
             phase="ai_rotation",
             decision="started",
             decision_source="ai_rotation",
-            selection_reason=f"testing {attempts_count} provider/key/model attempts",
+            selection_reason=reason,
         )
 
     def log_rotation_ranked_attempt(self, row):

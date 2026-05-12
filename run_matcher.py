@@ -169,7 +169,13 @@ async def _preflight_rotation(
             attempts, budget, tier_limit, cache_ttl, refresh,
         )
     if trace and trace.enabled:
-        trace.log_rotation_preflight_start(len(preflight_attempts))
+        trace.log_rotation_preflight_start(
+            len(preflight_attempts),
+            (
+                f"policy={policy} budget={budget} cache_rows={len(cache_rows)} "
+                f"refresh={refresh} tier_limit={tier_limit}"
+            ),
+        )
     rows = await run_rotation_health(
         preflight_attempts, ["json"], timeout_s=timeout,
         max_tokens=min(api_cfg.max_tokens, 256),

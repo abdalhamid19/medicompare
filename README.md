@@ -76,7 +76,6 @@ python test_opencode_models.py --mode both --timeout 20 --concurrency 4
 python run_matcher.py --provider opencode --trace --ai-search-limit 200
 
 # اختبار كل مزودي AI المتاحين وترتيبهم للـ rotation
-python test_ai_rotation.py --providers auto --mode json --timeout 10 --concurrency 4
 
 # تشغيل بنظام AI rotation بين كل providers الصالحة
 python run_matcher.py --provider rotation --trace --ai-search-limit 200
@@ -135,6 +134,10 @@ python run_tests.py
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
 | `--ai-timeout` | مهلة اختبار كل model/key في preflight بالثواني | 10 |
 | `--ai-search-limit N` | أقصى عدد unmatched يدخل مرحلة AI search | بلا حد |
+| `--rotation-preflight-policy` | سياسة preflight للـ rotation: `smart`, `full`, `off` | smart |
+| `--rotation-preflight-budget` | أقصى عدد rotation attempts يختبرها smart preflight | 60 |
+| `--rotation-preflight-cache-ttl` | مدة إعادة استخدام آخر تقرير rotation health بالثواني | 21600 |
+| `--rotation-preflight-refresh` | عدد النتائج الصحية من cache التي يعاد اختبارها | 10 |
 
 ### تشغيل AI آمن وسريع
 
@@ -146,15 +149,16 @@ python run_tests.py
 
 ```bash
 python test_opencode_models.py --mode both --timeout 20 --concurrency 4
-python test_ai_rotation.py --providers auto --mode json --timeout 10 --concurrency 4
 python run_matcher.py --provider rotation --trace --ai-search-limit 200
 ```
 
 مرحلة AI search لا ترسل كل `no_match` إلى النموذج. يتم إرسال الحالات التي لديها مرشحين أقوياء وآمنين فقط، مع الاحتفاظ بقواعد الرفض الخوارزمية مثل اختلاف الشكل أو الجرعة أو route أو imported/local.
 
-في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. البرنامج يختبر
-المتاح وقت التشغيل، ثم يرتب attempts حسب التوفر، جودة الموديل، الكوتا،
-والسرعة، ويبدأ بأفضل provider/model/key صالح.
+في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج
+افتراضياً `smart` preflight فيختبر عينة محدودة ومتوازنة من attempts بدل
+اختبار كل `provider/key/model`، ويعيد استخدام آخر تقرير صحي حديث لتقليل
+استهلاك الطلبات المتكررة. استخدم `--rotation-preflight-policy full` للتشخيص
+الشامل أو `--rotation-preflight-policy off` للاعتماد على fallback وقت التشغيل.
 يتم تقسيم موديلات كل provider إلى 3 مستويات حسب ترتيب `DEFAULT_MODELS`،
 ثم يدور داخل المستوى الأقوى أولاً بنظام round-robin بين كل
 `provider/key/model` قبل تكرار نفس التركيبة. إذا انتهت محاولات المستوى
