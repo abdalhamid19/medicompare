@@ -18,6 +18,7 @@ from drug_matcher.ai_rotation_health import attempts_from_partial_health
 from drug_matcher.ai_rotation_health import select_preflight_attempts
 from drug_matcher.config import PROVIDERS
 from run_matcher import _rotation_api_config
+from run_matcher import _smart_preflight_enough
 
 
 class AIRotationTests(unittest.TestCase):
@@ -314,6 +315,17 @@ class AIRotationTests(unittest.TestCase):
         self.assertEqual(cfg.review_model, "rotation")
         self.assertEqual(cfg.attempt_plan, (primary, reviewer))
         self.assertEqual(cfg.review_attempt_plan, (reviewer,))
+
+    def test_smart_preflight_enough_requires_count_and_provider_diversity(self):
+        rows = [
+            {"ok": True, "mode": "json", "provider": "groq"},
+            {"ok": True, "mode": "json", "provider": "mistral"},
+            {"ok": True, "mode": "json", "provider": "github"},
+        ]
+
+        self.assertTrue(_smart_preflight_enough(rows, 3, 3))
+        self.assertFalse(_smart_preflight_enough(rows[:2], 3, 2))
+        self.assertFalse(_smart_preflight_enough(rows, 3, 4))
 
 
 if __name__ == "__main__":

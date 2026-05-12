@@ -7,8 +7,10 @@ import os
 from drug_matcher.ai_health import AIKey, dedupe, run_health_checks, write_reports
 from drug_matcher.ai_rotation import configured_attempts
 from drug_matcher.ai_rotation_health import (
+    attempts_from_partial_health,
     attempts_from_health,
     run_rotation_health,
+    select_preflight_attempts,
     write_rotation_reports,
 )
 from drug_matcher.config import MatchingConfig, APIConfig, setup_logging, load_env, resolve_api_config, PROVIDERS
@@ -38,6 +40,11 @@ def parse_args():
     parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
     parser.add_argument("--ai-search-limit", type=int, default=None, help="Maximum unmatched rows to send through AI search")
     parser.add_argument("--concurrency", type=int, default=None, help="Maximum concurrent AI requests and preflight checks")
+    parser.add_argument("--rotation-preflight-policy", choices=["smart", "full", "off"], default="smart", help="Rotation preflight policy")
+    parser.add_argument("--rotation-preflight-budget", type=int, default=60, help="Maximum rotation attempts to test in smart preflight")
+    parser.add_argument("--rotation-preflight-min-healthy", type=int, default=24, help="Minimum healthy attempts targeted by smart preflight")
+    parser.add_argument("--rotation-preflight-min-providers", type=int, default=3, help="Minimum healthy providers targeted by smart preflight")
+    parser.add_argument("--rotation-preflight-tier-limit", type=int, default=1, help="Highest model tier to test in smart preflight")
     return parser.parse_args()
 
 
@@ -113,27 +120,59 @@ def _rotation_api_config(
     )
 
 
-async def _preflight_rotation(api_cfg, timeout, trace=None, concurrency=4):
+def _smart_preflight_enough(rows, min_healthy, min_providers):
+    healthy = _healthy_rows(rows)
+    providers = {str(row.get("provider", "")) for row in healthy}
+    return len(healthy) >= min_healthy and len(providers) >= min_providers
+
+
+async def _preflight_rotation(
+    api_cfg, timeout, trace=None, concurrency=4,
+    policy="smart", budget=60, min_healthy=24, min_providers=3,
+    tier_limit=1,
+):
     attempts = tuple(api_cfg.attempt_plan)
     if not attempts:
         return api_cfg
+    if policy == "off":
+        return api_cfg
+    preflight_attempts = attempts
+    if policy == "smart":
+        preflight_attempts = select_preflight_attempts(
+            attempts, budget, tier_limit,
+        )
     if trace and trace.enabled:
-        trace.log_rotation_preflight_start(len(attempts))
+        trace.log_rotation_preflight_start(len(preflight_attempts))
     rows = await run_rotation_health(
-        attempts, ["json"], timeout_s=timeout,
+        preflight_attempts, ["json"], timeout_s=timeout,
         max_tokens=min(api_cfg.max_tokens, 256),
-        concurrency=max(1, min(len(attempts), concurrency)),
+        concurrency=max(1, min(len(preflight_attempts), concurrency)),
     )
     write_rotation_reports(rows)
-    selected = attempts_from_health(attempts, rows)
+    selected = (
+        attempts_from_partial_health(attempts, rows)
+        if policy == "smart" else attempts_from_health(attempts, rows)
+    )
     if trace and trace.enabled:
         for row in rows:
             trace.log_rotation_ranked_attempt(row)
         trace.log_ai_preflight_result(rows, len(selected))
     logger.info(
-        "AI rotation preflight: %s/%s selected attempts (%s healthy)",
-        len(selected), len(rows), len(_healthy_rows(rows)),
+        "AI rotation preflight (%s): tested %s/%s, selected %s attempts "
+        "(%s healthy)",
+        policy, len(rows), len(attempts), len(selected), len(_healthy_rows(rows)),
     )
+    if policy == "smart" and not _smart_preflight_enough(
+        rows, min_healthy, min_providers,
+    ):
+        logger.warning(
+            "AI rotation smart preflight below target: healthy=%s "
+            "providers=%s target=%s/%s",
+            len(_healthy_rows(rows)),
+            len({str(row.get("provider", "")) for row in _healthy_rows(rows)}),
+            min_healthy,
+            min_providers,
+        )
     return _rotation_api_config(
         selected, max_tokens=api_cfg.max_tokens,
         temperature=api_cfg.temperature,
@@ -141,9 +180,21 @@ async def _preflight_rotation(api_cfg, timeout, trace=None, concurrency=4):
     )
 
 
-async def _preflight_api(api_cfg, timeout, trace=None, concurrency=4):
+async def _preflight_api(
+    api_cfg, timeout, trace=None, concurrency=4,
+    rotation_policy="smart", rotation_budget=60,
+    rotation_min_healthy=24, rotation_min_providers=3,
+    rotation_tier_limit=1,
+):
     if api_cfg.attempt_plan:
-        return await _preflight_rotation(api_cfg, timeout, trace, concurrency)
+        return await _preflight_rotation(
+            api_cfg, timeout, trace, concurrency,
+            policy=rotation_policy,
+            budget=rotation_budget,
+            min_healthy=rotation_min_healthy,
+            min_providers=rotation_min_providers,
+            tier_limit=rotation_tier_limit,
+        )
     keys = _key_items(api_cfg.api_keys)
     models = dedupe(
         [api_cfg.model] + list(api_cfg.fallback_models)
@@ -216,7 +267,14 @@ def main():
 
     if not args.no_ai and not args.no_ai_preflight and api_cfg.api_key:
         api_cfg = asyncio.run(
-            _preflight_api(api_cfg, args.ai_timeout, trace, ai_concurrency)
+            _preflight_api(
+                api_cfg, args.ai_timeout, trace, ai_concurrency,
+                rotation_policy=args.rotation_preflight_policy,
+                rotation_budget=args.rotation_preflight_budget,
+                rotation_min_healthy=args.rotation_preflight_min_healthy,
+                rotation_min_providers=args.rotation_preflight_min_providers,
+                rotation_tier_limit=args.rotation_preflight_tier_limit,
+            )
         )
 
     # Resolve start/end from --resume or explicit args
