@@ -508,6 +508,83 @@ class AIVerifierTests(unittest.TestCase):
         self.assertEqual(plan[0]["provider"], "opencode")
         self.assertEqual(plan[0]["model"], "big-pickle")
 
+    def test_rotation_request_plan_round_robins_within_same_tier(self) -> None:
+        attempts = tuple(
+            AIModelAttempt(
+                "groq", "url", "GROQ_API_KEY_1",
+                f"gsk-key{idx:06d}", f"model-{idx}", idx,
+                rotation_tier=1,
+            )
+            for idx in range(1, 4)
+        )
+        verifier = AIVerifier(
+            APIConfig(api_key=attempts[0].api_key, attempt_plan=attempts),
+        )
+
+        first = verifier._build_request_plan("ignored")[0]["model"]
+        second = verifier._build_request_plan("ignored")[0]["model"]
+        third = verifier._build_request_plan("ignored")[0]["model"]
+        fourth = verifier._build_request_plan("ignored")[0]["model"]
+
+        self.assertEqual([first, second, third, fourth], [
+            "model-1", "model-2", "model-3", "model-1",
+        ])
+
+    def test_rotation_request_plan_keeps_lower_tiers_as_late_fallbacks(self) -> None:
+        high = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "gsk-high111111", "high", 1, rotation_tier=1,
+        )
+        low = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "gsk-low222222", "low", 4, rotation_tier=2,
+        )
+        verifier = AIVerifier(
+            APIConfig(api_key=high.api_key, attempt_plan=(high, low)),
+        )
+
+        plan = verifier._build_request_plan("ignored")
+
+        self.assertEqual([item["model"] for item in plan], ["high", "low"])
+        self.assertEqual([item["rotation_tier"] for item in plan], [1, 2])
+
+    def test_rotation_request_plan_moves_to_lower_tier_when_high_tier_failed(self):
+        high = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "gsk-high111111", "high", 1, rotation_tier=1,
+        )
+        low = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "gsk-low222222", "low", 4, rotation_tier=2,
+        )
+        verifier = AIVerifier(
+            APIConfig(api_key=high.api_key, attempt_plan=(high, low)),
+        )
+        verifier._failed_combos.add(("groq", "111111", "high"))
+
+        plan = verifier._build_request_plan("ignored")
+
+        self.assertEqual(plan[0]["model"], "low")
+
+    def test_rotation_success_on_fallback_advances_after_actual_combo(self):
+        first = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_1",
+            "gsk-first111111", "first", 1, rotation_tier=1,
+        )
+        second = AIModelAttempt(
+            "groq", "url", "GROQ_API_KEY_2",
+            "gsk-second222222", "second", 1, rotation_tier=1,
+        )
+        verifier = AIVerifier(
+            APIConfig(api_key=first.api_key, attempt_plan=(first, second)),
+        )
+
+        plan = verifier._build_request_plan("ignored")
+        verifier._record_rotation_used(plan[1])
+        next_plan = verifier._build_request_plan("ignored")
+
+        self.assertEqual(next_plan[0]["model"], "first")
+
 
 if __name__ == "__main__":
     unittest.main()

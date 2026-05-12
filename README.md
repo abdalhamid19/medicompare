@@ -155,6 +155,10 @@ python run_matcher.py --provider rotation --trace --ai-search-limit 200
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. البرنامج يختبر
 المتاح وقت التشغيل، ثم يرتب attempts حسب التوفر، جودة الموديل، الكوتا،
 والسرعة، ويبدأ بأفضل provider/model/key صالح.
+يتم تقسيم موديلات كل provider إلى 3 مستويات حسب ترتيب `DEFAULT_MODELS`،
+ثم يدور داخل المستوى الأقوى أولاً بنظام round-robin بين كل
+`provider/key/model` قبل تكرار نفس التركيبة. إذا انتهت محاولات المستوى
+الأقوى بسبب quota أو failures، ينتقل تلقائياً للمستوى التالي داخل نفس التشغيل.
 
 يمكن استخدام `--review-model rotation` مع `--provider rotation` لتشغيل مراجعة
 ثانية على قرارات AI باستخدام أفضل attempt آخر متاح قدر الإمكان. إذا لم يوجد

@@ -163,6 +163,22 @@ class AIRotationTests(unittest.TestCase):
         self.assertGreater(ranked[0]["rotation_score"], 0)
         self.assertEqual(ranked[-1]["ok"], False)
 
+    def test_health_ranking_prefers_higher_rotation_tier(self):
+        rows = [
+            {
+                "ok": True, "quality_rank": 4, "rotation_tier": 1,
+                "elapsed_s": 5.0, "provider": "groq",
+            },
+            {
+                "ok": True, "quality_rank": 1, "rotation_tier": 2,
+                "elapsed_s": 0.1, "provider": "opencode",
+            },
+        ]
+
+        ranked = rank_health_rows(rows)
+
+        self.assertEqual(ranked[0]["provider"], "groq")
+
     def test_health_ranking_keeps_failures_as_late_fallbacks(self):
         rows = [
             {

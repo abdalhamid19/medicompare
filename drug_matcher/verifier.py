@@ -201,7 +201,7 @@ class AIVerifier:
 
     __slots__ = (
         "_cfg", "_session", "_semaphore", "_fallback_log",
-        "_failed_combos", "_combo_failures",
+        "_failed_combos", "_combo_failures", "_rotation_cursors",
     )
 
     def __init__(self, cfg: APIConfig | None = None, max_concurrent: int = 5):
@@ -211,6 +211,7 @@ class AIVerifier:
         self._fallback_log: list[str] = []
         self._failed_combos: set[tuple[str, str]] = set()
         self._combo_failures: dict[tuple[str, str], int] = {}
+        self._rotation_cursors: dict[str, int] = {}
 
     def get_fallback_log(self) -> str:
         """Return and clear the API failure log for trace reporting."""
@@ -254,29 +255,83 @@ class AIVerifier:
         ]
 
     def _rotation_request_plan(self, requested_model: str = "") -> list[dict[str, Any]]:
+        attempts = self._rotation_attempts_for(requested_model)
+        plan = []
+        for tier in sorted({attempt.rotation_tier for attempt in attempts}):
+            tier_attempts = [
+                attempt for attempt in attempts
+                if attempt.rotation_tier == tier
+                and self._combo_key(
+                    attempt.api_key, attempt.model, attempt.provider,
+                ) not in self._failed_combos
+            ]
+            plan.extend(
+                self._rotated_tier_plan(
+                    tier_attempts, requested_model, tier,
+                    advance=not plan,
+                ),
+            )
+        return plan
+
+    def _rotation_attempts_for(self, requested_model: str = ""):
         attempts = self._cfg.attempt_plan
         if requested_model == "rotation" and self._cfg.review_attempt_plan:
-            attempts = self._cfg.review_attempt_plan
+            return self._cfg.review_attempt_plan
         elif requested_model and requested_model != self._cfg.model:
             matching = tuple(
                 attempt for attempt in attempts
                 if attempt.model == requested_model
             )
             if matching:
-                attempts = matching
+                return matching
+        return attempts
 
-        plan = []
-        for attempt in attempts:
-            combo = (attempt.provider, attempt.key_suffix, attempt.model)
-            if combo in self._failed_combos:
-                continue
-            plan.append({
-                "provider": attempt.provider,
-                "base_url": attempt.base_url,
-                "key": attempt.api_key,
-                "model": attempt.model,
-            })
-        return plan
+    def _rotated_tier_plan(
+        self, attempts, requested_model: str, tier: int, *, advance: bool,
+    ) -> list[dict[str, Any]]:
+        if not attempts:
+            return []
+        key = self._rotation_cursor_key(requested_model, tier)
+        start = self._rotation_cursors.get(key, 0) % len(attempts)
+        if advance:
+            self._rotation_cursors[key] = (start + 1) % len(attempts)
+        indexed = list(enumerate(attempts))
+        ordered = indexed[start:] + indexed[:start]
+        return [
+            self._rotation_plan_item(attempt, key, position, len(attempts))
+            for position, attempt in ordered
+        ]
+
+    def _rotation_plan_item(
+        self, attempt, cursor_key: str, position: int, count: int,
+    ) -> dict[str, Any]:
+        return {
+            "provider": attempt.provider,
+            "base_url": attempt.base_url,
+            "key": attempt.api_key,
+            "model": attempt.model,
+            "rotation_cursor_key": cursor_key,
+            "rotation_position": position,
+            "rotation_count": count,
+            "rotation_tier": attempt.rotation_tier,
+        }
+
+    def _rotation_cursor_key(self, requested_model: str, tier: int) -> str:
+        if requested_model == "rotation" and self._cfg.review_attempt_plan:
+            scope = "review"
+        elif requested_model and requested_model != self._cfg.model:
+            scope = f"model:{requested_model}"
+        else:
+            scope = "primary"
+        return f"{scope}:tier:{tier}"
+
+    def _record_rotation_used(self, item: dict[str, Any]) -> None:
+        key = item.get("rotation_cursor_key")
+        position = item.get("rotation_position")
+        count = item.get("rotation_count")
+        if key is None or position is None or not count:
+            return
+        self._rotation_cursors[str(key)] = (int(position) + 1) % int(count)
 
     def _record_combo_failure(
         self, key: str, model: str, reason: str,
@@ -478,6 +533,7 @@ class AIVerifier:
                                 if confidence == 0.0:
                                     is_correct = bool(result.get("is_correct", False))
                                     confidence = 0.7 if is_correct else 0.6
+                                self._record_rotation_used(item)
                                 return {
                                     "is_correct": bool(result.get("is_correct", False)),
                                     "agree": bool(result.get("agree", True)),

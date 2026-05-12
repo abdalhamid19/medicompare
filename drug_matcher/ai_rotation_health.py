@@ -102,6 +102,7 @@ def attempts_from_health(
 def _with_attempt(row: dict, attempt: AIModelAttempt) -> dict:
     row["provider"] = attempt.provider
     row["quality_rank"] = attempt.quality_rank
+    row["rotation_tier"] = attempt.rotation_tier
     row["key_suffix"] = attempt.key_suffix
     return row
 
@@ -110,6 +111,7 @@ def _health_sort_key(row: dict):
     tier = fallback_tier(row)
     return (
         tier,
+        int(row.get("rotation_tier") or 3),
         int(row.get("quality_rank") or 999),
         -_quota_remaining(row),
         float(row.get("elapsed_s") or 9999),
@@ -120,10 +122,11 @@ def _health_sort_key(row: dict):
 def _rotation_score(row: dict) -> float:
     if not row.get("ok"):
         return 0.0
-    quality = max(0.0, 100.0 - int(row.get("quality_rank") or 100) * 10)
+    tier_bonus = max(0.0, 40.0 - int(row.get("rotation_tier") or 3) * 10.0)
+    quality = max(0.0, 80.0 - int(row.get("quality_rank") or 100) * 5)
     quota = min(_quota_remaining(row), 1000.0) / 20.0
     latency = max(0.0, 20.0 - float(row.get("elapsed_s") or 20))
-    return round(quality + quota + latency, 2)
+    return round(tier_bonus + quality + quota + latency, 2)
 
 
 def health_status(row: dict) -> str:
