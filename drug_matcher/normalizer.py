@@ -142,7 +142,7 @@ _QTY_RE = re.compile(
     r"GUMMIES|GUM|PACKETS|DOSES|METERED)\b",
     re.IGNORECASE,
 )
-_VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
+_VOL_RE = re.compile(r"(\d+(?:\.\d+)?)\s*ML\b", re.IGNORECASE)
 _NOISE_PREFIX_RE = re.compile(r"^[+*.]+\s*(IMP|IMPORTED)?\s*", re.IGNORECASE)
 _IMPORT_MARKER_RE = re.compile(
     r"(^[+*.]+\s*(IMP|IMPORTED))|\b(IMP|IMPORTED)\b",
@@ -179,7 +179,7 @@ def normalize(name: str) -> str:
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
     name = re.sub(r"(?<=\d)([A-Z])", r" \1", name)
-    name = re.sub(r"\b(\d+)\s*M\b", r"\1 MG", name)
+    name = re.sub(r"\b(\d+)\s*M\b(?!\s*\.)", r"\1 MG", name)
     name = re.sub(r"\b(\d+)\s*M\s*/", r"\1 MG /", name)
     name = re.sub(
         r"\bANDOFLOZIN XR 25 MG\s*/\s*100 MG\b",
