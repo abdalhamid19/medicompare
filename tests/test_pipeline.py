@@ -62,29 +62,10 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("_matched_price", review.columns)
             self.assertTrue((review["code"] == "D-2").any())
 
-    def test_post_cleanup_removes_component_mismatches(self) -> None:
+    def test_pipeline_has_no_post_cleanup_phase(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
-        pipeline._results = pd.DataFrame(
-            [
-                {
-                    "code": "D-1",
-                    "drug_name": "GYNOCONAZOLE 0.8% CREAM",
-                    "matched_product_name_en": "GYNOCONAZOL 0.4% CREAM",
-                    "matched_product_name_ar": "جينكونازول",
-                    "matched_store_product_id": "T-4",
-                    "match_score": 88.0,
-                    "verified": "ai_confirmed",
-                    "match_method": "ai_verified",
-                }
-            ]
-        )
 
-        cleaned = pipeline.run_post_cleanup()
-
-        self.assertEqual(cleaned.at[0, "matched_product_name_en"], "")
-        self.assertEqual(cleaned.at[0, "matched_store_product_id"], "")
-        self.assertEqual(cleaned.at[0, "verified"], "cleanup_rejected")
-        self.assertEqual(cleaned.at[0, "match_method"], "post_cleanup")
+        self.assertFalse(hasattr(pipeline, "run_post_cleanup"))
 
     def test_pipeline_passes_price_signal_to_index(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

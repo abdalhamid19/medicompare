@@ -716,25 +716,6 @@ class MatchTraceLog:
         row["selection_reason"] = raw_excerpt[:200]
         self._rows.append(row)
 
-    def log_post_cleanup(
-        self, code, name, norm, brand, matched_name, reason,
-        row_index="",
-    ):
-        if not self._enabled:
-            return
-        row = self._base(
-            code, name, norm, brand,
-            row_index=row_index, phase="post_cleanup",
-            decision="cleanup_rejected",
-            decision_source="post_cleanup",
-            error_stage="post_cleanup", error_code=reason,
-            reject_rule=reason,
-        )
-        row["step"] = "post_cleanup"
-        row["candidate_name"] = matched_name or ""
-        row["selection_reason"] = f"removed match after cleanup: {reason}"
-        self._rows.append(row)
-
     # --- output ---
 
     def save(self, prefix: str = "trace") -> tuple[str, str, str]:
@@ -778,17 +759,13 @@ class MatchTraceLog:
 
     def _summary_row(self, code, name, rows):
         final = self._last(rows, "final")
-        cleanup = self._last(rows, "post_cleanup")
         last_ai = self._last_ai_result(rows)
         ai_rows = [r for r in rows if r.get("ai_result")]
         rejected = [
             r for r in rows
             if r.get("decision") == "rejected" or r.get("reject_rule")
         ]
-        if cleanup:
-            status = "cleanup_rejected"
-            final_match = "NONE"
-        elif last_ai and self._ai_summary_status(last_ai) == "rejected":
+        if last_ai and self._ai_summary_status(last_ai) == "rejected":
             status = "no_match"
             final_match = "NONE"
         elif last_ai and self._ai_summary_status(last_ai) == "matched":
@@ -800,9 +777,9 @@ class MatchTraceLog:
         else:
             status = "unknown"
             final_match = ""
-        primary = cleanup or (rejected[-1] if rejected else final) or rows[-1]
+        primary = (rejected[-1] if rejected else final) or rows[-1]
         failure_stage = primary.get("error_stage")
-        if not failure_stage and status in {"no_match", "cleanup_rejected"}:
+        if not failure_stage and status == "no_match":
             failure_stage = "matching"
         reason = (
             primary.get("error_code") or primary.get("reject_rule")
@@ -1066,9 +1043,4 @@ class MatchTraceLog:
             f.write(
                 f"  [AI PARSE] model={row['model_used']} "
                 f"invalid_json excerpt={row['selection_reason']}\n",
-            )
-        elif step == "post_cleanup":
-            f.write(
-                f"  [POST CLEANUP] removed '{row['candidate_name']}' "
-                f"reason={row['reject_rule']}\n",
             )

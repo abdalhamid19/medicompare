@@ -126,7 +126,6 @@ async def main():
     await pipeline.run_ai_verification()
     await pipeline.run_ai_search_unmatched()
     await pipeline.run_ai_review()
-    pipeline.run_post_cleanup()
     pipeline.save(args.output)
     pipeline.print_stats()
 

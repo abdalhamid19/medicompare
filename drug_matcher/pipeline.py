@@ -1,12 +1,10 @@
 """Pipeline orchestrator - coordinates matching, verification, and output."""
 import logging
-import re
 
 import pandas as pd
-from rapidfuzz import fuzz
 
 from .config import MatchingConfig, APIConfig, Paths, load_env
-from .normalizer import parse_drug, components_match
+from .normalizer import parse_drug
 from .indexer import DrugIndex
 from .ai_steps import run_ai_verification, run_ai_search, run_ai_review
 from .trace_log import MatchTraceLog
@@ -251,90 +249,6 @@ class MatchPipeline:
         )
         return self._results
 
-    # --- Phase 4: post cleanup ---
-
-    def run_post_cleanup(self) -> pd.DataFrame:
-        """Remove algorithmically detectable wrong matches."""
-        self._require_results()
-        matched = self._results[
-            self._results["matched_product_name_en"].notna() &
-            (self._results["matched_product_name_en"] != "")
-        ].copy()
-        if len(matched) == 0:
-            return self._results
-        removed = 0
-        for idx, r in matched.iterrows():
-            cleanup_reason = self._cleanup_mismatch_reason(r)
-            if cleanup_reason:
-                if self._trace and self._trace.enabled:
-                    parsed = parse_drug(r["drug_name"])
-                    self._trace.log_post_cleanup(
-                        r["code"], r["drug_name"],
-                        parsed.normalized, parsed.brand,
-                        r["matched_product_name_en"],
-                        cleanup_reason, row_index=idx,
-                    )
-                self._nan_out_row(idx)
-                removed += 1
-        logger.info(f"Post-cleanup: removed {removed} wrong matches")
-        return self._results
-
-    def _is_cleanup_mismatch(self, r):
-        return bool(self._cleanup_mismatch_reason(r))
-
-    def _cleanup_mismatch_reason(self, r):
-        d_comp = parse_drug(r["drug_name"])
-        m_comp = parse_drug(r["matched_product_name_en"])
-        is_ok, reason = components_match(
-            d_comp, m_comp, self._cfg.brand_prefix_min,
-        )
-        d_brand = re.sub(r"[^A-Z0-9]", "", d_comp.brand)
-        m_brand = re.sub(r"[^A-Z0-9]", "", m_comp.brand)
-        brand_mismatch = (
-            d_brand and m_brand
-            and len(d_brand) >= 4 and len(m_brand) >= 4
-            and d_brand[:4] != m_brand[:4]
-            and d_brand not in m_brand
-            and m_brand not in d_brand
-        )
-        if not is_ok:
-            if self._cleanup_mismatch_is_tolerable(d_comp, m_comp, reason):
-                return ""
-            return reason
-        if brand_mismatch:
-            if self._cleanup_brand_typo_is_tolerable(d_comp, m_comp):
-                return ""
-            return "brand_prefix_mismatch"
-        return ""
-
-    def _cleanup_mismatch_is_tolerable(self, d_comp, m_comp, reason: str) -> bool:
-        if reason not in {"different_brand", "brand_prefix_mismatch"}:
-            return False
-        return self._cleanup_brand_typo_is_tolerable(d_comp, m_comp)
-
-    def _cleanup_brand_typo_is_tolerable(self, d_comp, m_comp) -> bool:
-        d_brand = re.sub(r"[^A-Z0-9]", "", d_comp.brand)
-        m_brand = re.sub(r"[^A-Z0-9]", "", m_comp.brand)
-        if not d_brand or not m_brand:
-            return False
-        if fuzz.ratio(d_brand, m_brand) < 84:
-            return False
-        unsafe_checks = (
-            (d_comp.dosage_nums and m_comp.dosage_nums and d_comp.dosage_nums != m_comp.dosage_nums),
-            (d_comp.form and m_comp.form and d_comp.form != m_comp.form),
-            (d_comp.qty and m_comp.qty and d_comp.qty != m_comp.qty),
-        )
-        return not any(unsafe_checks)
-
-    def _nan_out_row(self, idx):
-        for col in _RESULT_COLS[2:6]:
-            self._results[col] = self._results[col].astype(object)
-            self._results.at[idx, col] = ""
-        self._results.at[idx, "verified"] = "cleanup_rejected"
-        self._results.at[idx, "match_method"] = "post_cleanup"
-        self._results.at[idx, "ai_confidence"] = ""
-        self._results.at[idx, "ai_review_confidence"] = ""
-
     # --- save & stats ---
 
     _PROGRESS_FILE = "output/.progress"
@@ -482,7 +396,6 @@ class MatchPipeline:
             await self.run_ai_verification()
             await self.run_ai_search_unmatched()
             await self.run_ai_review()
-        self.run_post_cleanup()
         self.save(output_path)
         self.save_manual_review()
         self.print_stats()

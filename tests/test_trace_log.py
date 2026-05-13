@@ -5,11 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import pandas as pd
-
-from drug_matcher.config import MatchingConfig
 from drug_matcher.normalizer import parse_drug
-from drug_matcher.pipeline import MatchPipeline
 from drug_matcher.trace_log import MatchTraceLog
 
 
@@ -197,31 +193,10 @@ class TraceLogTests(unittest.TestCase):
         self.assertEqual(row["final_status"], "matched")
         self.assertEqual(row["final_match"], "AMRIZOLE N 5 VAG. SUPP.")
 
-    def test_post_cleanup_rejection_is_logged(self) -> None:
-        pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
-        pipeline._trace = MatchTraceLog(enabled=True)
-        pipeline._results = pd.DataFrame([{
-            "code": "D-1",
-            "drug_name": "GYNOCONAZOLE 0.8% CREAM",
-            "matched_product_name_en": "GYNOCONAZOL 0.4% CREAM",
-            "matched_product_name_ar": "جينكونازول",
-            "matched_store_product_id": "T-4",
-            "match_score": 88.0,
-            "verified": "ai_confirmed",
-            "match_method": "ai_verified",
-            "ai_confidence": "",
-            "ai_review_confidence": "",
-        }])
+    def test_trace_log_has_no_post_cleanup_api(self) -> None:
+        trace = MatchTraceLog(enabled=True)
 
-        pipeline.run_post_cleanup()
-
-        cleanup_rows = [
-            r for r in pipeline._trace._rows
-            if r["step"] == "post_cleanup"
-        ]
-        self.assertEqual(len(cleanup_rows), 1)
-        self.assertEqual(cleanup_rows[0]["decision"], "cleanup_rejected")
-        self.assertEqual(cleanup_rows[0]["error_stage"], "post_cleanup")
+        self.assertFalse(hasattr(trace, "log_post_cleanup"))
 
 
 if __name__ == "__main__":

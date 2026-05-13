@@ -173,8 +173,6 @@ python run_matcher.py --provider rotation --review-model rotation --trace --conc
   --ai-search-candidate-limit 8 --ai-search-review-accept-confidence 0.85
 ```
 
-يتم تشغيل post-cleanup كمرحلة نهائية افتراضية قبل الحفظ لإزالة أي تطابق ما زال يخالف قواعد المكونات الحتمية بعد AI/review.
-
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج
 افتراضياً `smart` preflight فيختبر عينة محدودة ومتوازنة من attempts بدل
 اختبار كل `provider/key/model`، ويعيد استخدام آخر تقرير صحي حديث لتقليل
