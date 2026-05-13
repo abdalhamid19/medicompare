@@ -161,7 +161,7 @@ python test_opencode_models.py --mode both --timeout 20 --concurrency 4
 python run_matcher.py --provider rotation --trace --ai-search-limit 200
 ```
 
-مرحلة AI search لا ترسل كل `no_match` إلى النموذج. الوضع الافتراضي `review-candidates` يرسل المرشحين الآمنين، ويضيف مرشحين مرفوضين خوارزميًا لأسباب قابلة للمراجعة مثل typo في brand أو اختلاف imported/local أو pack-size، لكن يقبلهم فقط بثقة أعلى. تبقى الاختلافات الخطرة مثل route أو age group أو form غير قابلة للإرسال.
+مرحلة AI search لا ترسل كل `no_match` إلى النموذج. الوضع الافتراضي `review-candidates` يرسل المرشحين الآمنين، ويضيف مرشحين مرفوضين خوارزميًا لأسباب قابلة للمراجعة مثل typo في brand أو اختلاف imported/local أو pack-size، لكن يقبلهم فقط بثقة أعلى ثم يمررهم لمراجعة صارمة. تبقى الاختلافات الخطرة مثل route أو age group أو form غير قابلة للإرسال.
 
 لزيادة عدد الحالات التي تدخل AI بدون فتحها عشوائياً:
 
@@ -173,7 +173,7 @@ python run_matcher.py --provider rotation --review-model rotation --trace --conc
   --ai-search-candidate-limit 8 --ai-search-review-accept-confidence 0.85
 ```
 
-لا يتم تشغيل post-cleanup كمرحلة نهائية افتراضية؛ بدلاً من ذلك تُراجع نتائج AI الحساسة بموديل مراجعة عند استخدام `--review-model rotation` وتطبق قواعد المكونات قبل القبول.
+يتم تشغيل post-cleanup كمرحلة نهائية افتراضية قبل الحفظ لإزالة أي تطابق ما زال يخالف قواعد المكونات الحتمية بعد AI/review.
 
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج
 افتراضياً `smart` preflight فيختبر عينة محدودة ومتوازنة من attempts بدل

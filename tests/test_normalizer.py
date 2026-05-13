@@ -115,6 +115,10 @@ class NormalizerTests(unittest.TestCase):
             ("INSULINAGYPT R 100 UNITS 10 ML", "INSULINAGYPT 70 / 30 100 I.U. / ML ( 10 ML) VIAL", "different_modifier"),
             ("BETADINE 10% PRONTO 120 ML", "BETADINE VAGINAL DOUCHE 10 % 120 ML", "different_modifier"),
             ("GROWTH FORMULA ADULT CHOCOLATE", "GROWTH FORMULA FOR KIDS 400 GM POWDER CHOCOLATE", "different_age_group"),
+            ("INSULINAGYPT 70/30 100 UNITS 10 ML", "INSULINAGYPT N 100 I.U. / ML (10 ML) VIAL", "different_modifier"),
+            ("INSULINAGYPT 70/30 100 UNITS 10 ML", "INSULINAGYPT R 100 I.U. / ML (10 ML) VIAL", "different_modifier"),
+            ("ESMATAC GELATIN CAPS", "ESMATAC D.R. CAPS", "different_modifier"),
+            ("B-FRESH MOUTHWASH MINT", "B-FRESH GREEN MOUTH WASH 500 ML", "different_flavor"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):

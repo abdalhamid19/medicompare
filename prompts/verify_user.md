@@ -13,4 +13,4 @@ Is this the SAME product? The Arabic name can help confirm the match if the
 English name is ambiguous, but it cannot override a hard rejection conflict.
 
 Return JSON only:
-{"is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0}
+{"decision": "accept|reject", "is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}

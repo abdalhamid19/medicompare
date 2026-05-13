@@ -274,7 +274,11 @@ def health_status(row: dict) -> str:
     message = str(row.get("error_message", "")).lower()
     if error_type == "TimeoutError":
         return "degraded"
-    if error_type == "invalid_json" or "invalid_json" in error_type:
+    if (
+        error_type in {"invalid_json", "response_not_json", "response_shape", "null_content"}
+        or "invalid_json" in error_type
+        or error_type.startswith("missing_fields:")
+    ):
         return "degraded"
     if http_status == "429" or error_type == "http_429":
         return "quota-limited"

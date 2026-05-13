@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from drug_matcher.normalizer import components_match, parse_drug
 
 
 def _read_csv(path: str) -> pd.DataFrame:
@@ -35,6 +40,35 @@ def _summary(label: str, df: pd.DataFrame) -> list[str]:
         lines.extend(
             f"  {status or '<blank>'}: {count}"
             for status, count in df["verified"].value_counts().head(15).items()
+        )
+    return lines
+
+
+def _component_audit(label: str, df: pd.DataFrame) -> list[str]:
+    matched = df[_matched(df)]
+    failures: list[tuple[str, pd.Series]] = []
+    for _, row in matched.iterrows():
+        ok, reason = components_match(
+            parse_drug(row.get("drug_name", "")),
+            parse_drug(row.get("matched_product_name_en", "")),
+        )
+        if not ok:
+            failures.append((reason, row))
+    lines = [f"{label} component audit: failures={len(failures)}"]
+    if not failures:
+        return lines
+    reason_counts = pd.Series([reason for reason, _ in failures]).value_counts()
+    lines.extend(
+        f"  {reason}: {count}"
+        for reason, count in reason_counts.head(12).items()
+    )
+    lines.append(f"{label} component audit sample:")
+    for reason, row in failures[:20]:
+        lines.append(
+            "  "
+            f"{row.get('code', '')}: {row.get('drug_name', '')} -> "
+            f"{row.get('matched_product_name_en', '')} "
+            f"({row.get('match_method', '')}, {row.get('verified', '')}, {reason})"
         )
     return lines
 
@@ -111,6 +145,7 @@ def main() -> None:
     lines: list[str] = []
     lines.extend(_summary("before", before))
     lines.extend(_summary("after", after))
+    lines.extend(_component_audit("after", after))
     lines.extend(compare(before, after))
     lines.extend(_trace_summary("before", args.before_trace))
     lines.extend(_trace_summary("after", args.after_trace))

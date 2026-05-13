@@ -788,16 +788,12 @@ class MatchTraceLog:
         if cleanup:
             status = "cleanup_rejected"
             final_match = "NONE"
-        elif last_ai and last_ai.get("ai_result") in {
-            "ai_rejected", "ai_review_rejected", "not_found",
-        }:
+        elif last_ai and self._ai_summary_status(last_ai) == "rejected":
             status = "no_match"
             final_match = "NONE"
-        elif last_ai and last_ai.get("ai_result") in {
-            "ai_found", "ai_corrected", "ai_review_corrected",
-        }:
+        elif last_ai and self._ai_summary_status(last_ai) == "matched":
             status = "matched"
-            final_match = last_ai.get("candidate_name", "")
+            final_match = last_ai.get("candidate_name", "") or self._last_candidate_name(rows)
         elif final:
             status = "matched" if final.get("final_match") != "NONE" else "no_match"
             final_match = final.get("final_match", "")
@@ -840,6 +836,39 @@ class MatchTraceLog:
             }:
                 return row
         return None
+
+    @staticmethod
+    def _ai_summary_status(row):
+        result = row.get("ai_result", "")
+        if result in {"ai_rejected", "ai_review_rejected", "not_found"}:
+            return "rejected"
+        if result in {
+            "ai_found", "ai_corrected", "ai_review_corrected",
+            "ai_confirmed",
+        }:
+            return "matched"
+        if result.endswith("_reviewed"):
+            base = result.removesuffix("_reviewed")
+            if base in {"ai_found", "ai_corrected", "ai_confirmed"}:
+                return "matched"
+        if result.endswith("_kept_low_confidence_review"):
+            base = result.removesuffix("_kept_low_confidence_review")
+            if base in {"ai_found", "ai_corrected", "ai_confirmed"}:
+                return "matched"
+            if base == "ai_rejected":
+                return "rejected"
+        return ""
+
+    @staticmethod
+    def _last_candidate_name(rows):
+        for row in reversed(rows):
+            candidate = row.get("candidate_name")
+            if candidate:
+                return candidate
+            final_match = row.get("final_match")
+            if final_match and final_match != "NONE":
+                return final_match
+        return ""
 
     @staticmethod
     def _provider_model(rows):

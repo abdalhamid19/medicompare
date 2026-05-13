@@ -74,6 +74,8 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("best_index", SEARCH_PROMPT)
         self.assertIn("agree", REVIEW_PROMPT)
         self.assertIn("is_correct", FRESH_REVIEW_PROMPT)
+        self.assertIn("hard_conflicts", VERIFY_PROMPT)
+        self.assertIn("mismatched_fields", SEARCH_PROMPT)
 
     def test_verify_prompt_includes_component_context(self) -> None:
         verifier = AIVerifier(APIConfig(api_key="test-key"))
@@ -281,13 +283,13 @@ class AIVerifierTests(unittest.TestCase):
         self.assertIn("inventory=34", user_prompt)
         self.assertIn("candidate=35", user_prompt)
 
-    def test_invalid_json_fallback_is_low_confidence_and_traceable(self) -> None:
+    def test_invalid_json_fallback_rejects_low_confidence_and_is_traceable(self) -> None:
         result = _fallback_from_unparseable_response(
             "This is a correct match but not JSON",
             "test-model",
         )
 
-        self.assertTrue(result["is_correct"])
+        self.assertFalse(result["is_correct"])
         self.assertLess(result["confidence"], 0.7)
         self.assertTrue(result["parse_failed"])
         self.assertIn("invalid_json", result["reason"])

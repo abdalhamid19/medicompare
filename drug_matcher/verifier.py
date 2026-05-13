@@ -22,6 +22,11 @@ from .prompts import (
 logger = logging.getLogger("medicompare")
 
 _TRANSIENT_COMBO_FAILURE_LIMIT = 2
+_PERMANENT_PARSE_FAILURES = frozenset((
+    "invalid_json",
+    "null_content",
+    "json_generation_failed",
+))
 
 
 def _coerce_best_index(value, max_index: int) -> tuple[int, bool]:
@@ -115,13 +120,11 @@ def _infer_is_correct(text: str) -> bool:
 
 
 def _fallback_from_unparseable_response(text: str, model: str) -> dict[str, Any]:
-    is_correct = _infer_is_correct(text)
-    confidence = 0.55 if is_correct else 0.4
     return {
-        "is_correct": is_correct,
-        "agree": is_correct,
+        "is_correct": False,
+        "agree": False,
         "reason": f"invalid_json:{text[:180]}",
-        "confidence": confidence,
+        "confidence": 0.4,
         "model_used": model,
         "parse_failed": True,
     }
@@ -506,6 +509,7 @@ class AIVerifier:
                                     error_code = "null_content" if content is None else "invalid_json"
                                     disabled = self._record_combo_failure(
                                         key, mdl, error_code,
+                                        permanent=error_code in _PERMANENT_PARSE_FAILURES,
                                         provider=provider,
                                     )
                                     attempts.append({
@@ -552,6 +556,10 @@ class AIVerifier:
                                     "confidence": confidence,
                                     "model_used": mdl,
                                     "provider_used": provider,
+                                    "decision": str(result.get("decision", "")),
+                                    "hard_conflicts": result.get("hard_conflicts", []),
+                                    "matched_fields": result.get("matched_fields", []),
+                                    "mismatched_fields": result.get("mismatched_fields", []),
                                     "_raw": result,
                                     "_api_attempts": attempts,
                                 }

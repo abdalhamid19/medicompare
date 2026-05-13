@@ -976,6 +976,79 @@ class TestApplyReviewResults(unittest.TestCase):
         self.assertEqual(results.at[0, "verified"], "ai_review_rejected")
         self.assertEqual(results.at[0, "matched_product_name_en"], "")
 
+    def test_component_modifier_mismatch_review_agreement_still_rejects(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "ARTHROFAST 150 MG 14 TAB",
+                "matched_product_name_en": "ARTHROFAST 150 MG 14 M.R. TAB",
+                "matched_product_name_ar": "ارثروفاست",
+                "matched_store_product_id": "T-9",
+                "match_score": 95.0, "verified": "ai_found",
+                "match_method": "ai_search",
+            },
+        ])
+        results["ai_confidence"] = 0.99
+        results["_ai_component_reason"] = "different_modifier"
+        index = _make_index()
+        verifier = MagicMock()
+        verifier._cfg.review_model = "review"
+        verifier.get_fallback_log.return_value = ""
+
+        overridden = asyncio.run(
+            _apply_review_results(
+                verifier, results, index,
+                [{
+                    "row_idx": 0,
+                    "is_correct": True,
+                    "confidence": 0.99,
+                    "reason": "same brand",
+                    "api_failed": False,
+                }],
+                MatchingConfig(),
+                trace=None,
+            )
+        )
+
+        self.assertEqual(overridden, 1)
+        self.assertEqual(results.at[0, "verified"], "ai_review_rejected")
+        self.assertEqual(results.at[0, "matched_product_name_en"], "")
+
+    def test_component_brand_typo_requires_strong_review_confidence(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "ADMLASE SYRUP 120 ML",
+                "matched_product_name_en": "AMYLASE SYRUP 120 ML",
+                "matched_product_name_ar": "اميليز",
+                "matched_store_product_id": "T-1",
+                "match_score": 87.0, "verified": "ai_found",
+                "match_method": "ai_search",
+            },
+        ])
+        results["ai_confidence"] = 0.99
+        results["_ai_component_reason"] = "different_brand"
+        index = _make_index()
+        verifier = MagicMock()
+        verifier._cfg.review_model = "review"
+        verifier.get_fallback_log.return_value = ""
+
+        asyncio.run(
+            _apply_review_results(
+                verifier, results, index,
+                [{
+                    "row_idx": 0,
+                    "is_correct": True,
+                    "confidence": 0.8,
+                    "reason": "probably typo",
+                    "api_failed": False,
+                }],
+                MatchingConfig(ai_search_review_accept_confidence=0.9),
+                trace=None,
+            )
+        )
+
+        self.assertEqual(results.at[0, "verified"], "ai_review_rejected")
+        self.assertEqual(results.at[0, "matched_product_name_en"], "")
+
 
 class TestBatchReview(unittest.TestCase):
     def test_propagates_api_failed_flag_not_row_index(self):

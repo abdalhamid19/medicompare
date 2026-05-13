@@ -48,7 +48,13 @@ BRAND_QUALIFIERS = frozenset({
 })
 ACRONYM_BRANDS = frozenset({"AIG"})
 FLAVOR_WORDS = frozenset({
-    "BANANA", "ORANGE", "PINEAPPLE", "STRAWBERRY",
+    "APPLE", "BANANA", "BERRY", "CHERRY", "CHOCOLATE", "COLA",
+    "GRAPE", "LEMON", "MANGO", "MINT", "ORANGE", "PINEAPPLE",
+    "RASPBERRY", "STRAWBERRY", "VANILLA",
+})
+COLOR_WORDS = frozenset({
+    "BLACK", "BLUE", "BROWN", "GOLD", "GREEN", "GREY", "PINK",
+    "PURPLE", "RED", "SILVER", "WHITE", "YELLOW",
 })
 VITAMIN_MODIFIERS = frozenset({
     "B1", "B2", "B6", "B12", "D3",
@@ -56,7 +62,7 @@ VITAMIN_MODIFIERS = frozenset({
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
     "SINUS", "D", "R", "MEN", "WOMEN", "MALE", "FEMALE",
-    "XR", "XL", "SR", "CR", "MR", "PRONTO", "VAGINAL", "NASAL",
+    "XR", "XL", "SR", "CR", "MR", "ER", "DR", "PRONTO", "VAGINAL", "NASAL",
     "MOUTH",
 })
 COSMETIC_WORDS = frozenset({
@@ -194,7 +200,7 @@ def normalize(name: str) -> str:
     # Remove dots but NOT between digits that form a decimal (e.g. 0.5, 2.5)
     name = re.sub(r'\.(?!\d)', ' ', name)
     name = re.sub(r'(?<!\d)\.', ' ', name)
-    name = re.sub(r"\b([ESCM])\s+R\b", r"\1R", name)
+    name = re.sub(r"\b([DESCMX])\s+R\b", r"\1R", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
@@ -253,6 +259,7 @@ def parse_drug(name: str) -> DrugComponents:
                 not re.search(r"\d", w)
                 and not _is_brand_boundary(words, idx)
                 and not _is_pediatric_inf(words, idx)
+                and not _is_descriptive_brand_word(words[idx])
             )
         )
     if brand == "ATOMOXAPEX" and dosage_nums == ("40",) and volume == "100":
@@ -369,6 +376,7 @@ def _is_brand_boundary(words: list[str], idx: int) -> bool:
         word in FORM_PREFIXES or word in FORM_WORDS
         or word in NOISE_WORDS or word in BRAND_QUALIFIERS
         or _is_pediatric_inf(words, idx)
+        or _is_descriptive_brand_word(word)
     ):
         return True
     return idx > 0 and (
@@ -378,6 +386,8 @@ def _is_brand_boundary(words: list[str], idx: int) -> bool:
 
 def classify_product(norm: str) -> str:
     words = set(norm.split())
+    if {"PRE", "FILLED"} <= words and "SYRINGE" in words:
+        return "medicine"
     if words & DEVICE_WORDS:
         return "device"
     if words & BABY_FOOD_WORDS and not words & {"BODY", "CREAM", "LOTION"}:
@@ -450,7 +460,32 @@ def _modifier_is_optional(modifier: str, d_words: set[str], m_words: set[str]):
         return True
     if modifier == "R" and "PROLONGED" in (d_words | m_words):
         return True
+    if modifier == "MOUTH" and (
+        "MOUTHWASH" in d_words or "MOUTHWASH" in m_words
+    ) and (
+        "WASH" in d_words or "WASH" in m_words
+    ):
+        return True
     return False
+
+
+def _is_descriptive_brand_word(word: str) -> bool:
+    return word in {"GELATIN"}
+
+
+def _insulin_variant_signature(c: DrugComponents) -> frozenset[str]:
+    if "INSULINAGYPT" not in c.normalized.replace(" ", ""):
+        return frozenset()
+    words = set(c.normalized.split())
+    variants = set(words & {"N", "R"})
+    if re.search(r"\b70\s*/\s*30\b", c.normalized):
+        variants.add("70/30")
+    return frozenset(variants)
+
+
+def _variant_tokens(c: DrugComponents) -> frozenset[str]:
+    words = set(c.normalized.split())
+    return frozenset(words & (FLAVOR_WORDS | COLOR_WORDS))
 
 
 def _is_pediatric_inf(words: list[str], idx: int) -> bool:
@@ -599,6 +634,14 @@ def components_match(
             if _modifier_is_optional(modifier, d_words, m_words):
                 continue
             return False, "different_modifier"
+    d_insulin = _insulin_variant_signature(d)
+    m_insulin = _insulin_variant_signature(m)
+    if (d_insulin or m_insulin) and d_insulin != m_insulin:
+        return False, "different_modifier"
+    d_variants = _variant_tokens(d)
+    m_variants = _variant_tokens(m)
+    if d_variants and m_variants and d_variants.isdisjoint(m_variants):
+        return False, "different_flavor"
     d_pediatric = _has_pediatric_signal(d_words)
     m_pediatric = _has_pediatric_signal(m_words)
     if d_pediatric != m_pediatric:
@@ -621,6 +664,7 @@ def components_match(
                 and fuzz.ratio(d_clean, m_clean) < 86
             ):
                 return False, "different_brand"
+
         if d_clean != m_clean and d_clean not in m_clean and m_clean not in d_clean:
             if fuzz.ratio(d_clean, m_clean) < 86:
                 return False, "different_brand"
@@ -629,6 +673,13 @@ def components_match(
             longer = max(len(d_clean), len(m_clean))
             if longer - shorter > 2 and fuzz.ratio(d_clean, m_clean) < 86:
                 return False, "different_brand"
+
+    if (
+        d.product_class != m.product_class
+        and d.product_class != "medicine"
+        and m.product_class != "medicine"
+    ):
+        return False, "different_product_class"
 
     # Dosage check
     dosage_checked_compatible = False

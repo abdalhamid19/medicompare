@@ -22,6 +22,7 @@ _DANGEROUS_REVIEW_REASONS = frozenset((
     "different_route",
     "different_weight",
     "different_flavor",
+    "different_product_class",
 ))
 _FUZZY_VERIFY_METHODS = frozenset((
     "token_set_ratio",
@@ -690,6 +691,55 @@ def _search_acceptance_threshold(ai_result, candidates, parsed, index, cfg):
     return max(threshold, cfg.ai_search_review_accept_confidence), reason
 
 
+def _component_review_required(results, idx) -> str:
+    if "_ai_component_reason" not in results.columns:
+        return ""
+    reason = results.at[idx, "_ai_component_reason"]
+    if reason is None or pd.isna(reason):
+        return ""
+    reason = str(reason)
+    return "" if reason.lower() == "nan" else reason
+
+
+def _safe_reviewed_component_mismatch(results, idx, cfg, reason: str) -> bool:
+    if reason not in {"different_brand", "brand_prefix_mismatch"}:
+        return False
+    parsed = parse_drug(results.at[idx, "drug_name"])
+    matched = parse_drug(results.at[idx, "matched_product_name_en"])
+    if _brand_similarity(parsed.brand, matched.brand) < 84:
+        return False
+    unsafe_checks = (
+        parsed.dosage_nums and matched.dosage_nums
+        and parsed.dosage_nums != matched.dosage_nums,
+        parsed.form and matched.form and parsed.form != matched.form,
+        parsed.qty and matched.qty and parsed.qty != matched.qty,
+        parsed.volume and matched.volume and parsed.volume != matched.volume,
+    )
+    if any(unsafe_checks):
+        return False
+    return True
+
+
+def _reject_reviewed_component_mismatch(
+    verifier, results, idx, parsed, review_confidence, review_reason, trace, rr,
+):
+    _clear_match(results, idx)
+    results.at[idx, "verified"] = "ai_review_rejected"
+    results.at[idx, "match_method"] = "ai_reviewed"
+    results.at[idx, "ai_review_confidence"] = round(review_confidence, 2)
+    if trace and trace.enabled:
+        trace.log_ai_review_result(
+            results.at[idx, "code"], results.at[idx, "drug_name"],
+            parsed.normalized, parsed.brand,
+            False, review_confidence, review_reason,
+            "ai_review_rejected",
+            review_model=verifier._cfg.review_model,
+            api_failures=verifier.get_fallback_log(),
+            row_index=idx,
+            parse_failed=rr.get("parse_failed", False),
+        )
+
+
 def _apply_search_result(results, idx, ai_result):
     rec = ai_result["record"]
     results.at[idx, "matched_product_name_en"] = rec["product_name_en"]
@@ -748,10 +798,11 @@ def _select_for_review(results, cfg):
         return ai_verified
     confidences = pd.to_numeric(ai_verified["ai_confidence"], errors="coerce")
     component_reasons = (
-        ai_verified["_ai_component_reason"].astype(str)
+        ai_verified["_ai_component_reason"].fillna("").astype(str)
         if "_ai_component_reason" in ai_verified.columns
         else pd.Series("", index=ai_verified.index)
     )
+    component_reasons = component_reasons.replace("nan", "")
     component_review = ai_verified[component_reasons != ""]
     # API-failed items (confidence == 0) need fresh verification
     api_failed = ai_verified[confidences == 0.0]
@@ -823,6 +874,7 @@ async def _apply_review_results(
         review_reason = rr.get("reason", "")
         is_correct = rr.get("is_correct", True)
         is_api_failed = rr.get("api_failed", False)
+        component_reason = _component_review_required(results, idx)
         _trace_api_attempts(trace, results, idx, parsed, rr)
         _trace_parse_failure(trace, results, idx, parsed, rr)
 
@@ -862,6 +914,26 @@ async def _apply_review_results(
                         row_index=idx,
                         parse_failed=rr.get("parse_failed", False),
                     )
+        elif (
+            component_reason
+            and first_decision in {"ai_confirmed", "ai_corrected", "ai_found"}
+            and (
+                not is_correct
+                or review_confidence < max(
+                    _AI_REVIEW_OVERRIDE_CONFIDENCE,
+                    cfg.ai_search_review_accept_confidence,
+                )
+                or not _safe_reviewed_component_mismatch(
+                    results, idx, cfg, component_reason,
+                )
+            )
+        ):
+            overridden += 1
+            _reject_reviewed_component_mismatch(
+                verifier, results, idx, parsed, review_confidence,
+                review_reason or f"component mismatch: {component_reason}",
+                trace, rr,
+            )
         elif is_correct:
             # Second model agrees with first AI
             results.at[idx, "verified"] = f"{first_decision}_reviewed"

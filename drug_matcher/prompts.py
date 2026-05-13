@@ -13,7 +13,7 @@ DRUG A (from inventory): $drug_a
 DRUG B (from tawreed): $drug_b$drug_b_ar_line
 
 Return JSON:
-{"is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0}"""
+{"decision": "accept|reject", "is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}"""
 
 _SEARCH_FALLBACK = """Given this drug from inventory: "$drug_name"
 
@@ -23,7 +23,7 @@ Candidates:
 $candidates_text
 
 Return JSON:
-{"best_index": 0, "reason": "brief reason", "confidence": 0.0}"""
+{"decision": "accept|reject", "best_index": 0, "reason": "brief reason", "confidence": 0.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}"""
 
 _REVIEW_FALLBACK = """Review this AI decision about a drug match:
 
@@ -35,7 +35,7 @@ First AI confidence: $first_confidence
 First AI reason: $first_reason
 
 Return JSON:
-{"agree": true/false, "reason": "brief reason", "confidence": 0.0-1.0}"""
+{"decision": "agree|disagree", "agree": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}"""
 
 _FRESH_REVIEW_FALLBACK = """The first AI model was unavailable.
 Verify this match from scratch.
@@ -44,7 +44,7 @@ DRUG A (from inventory): $drug_a
 DRUG B (from tawreed): $drug_b$drug_b_ar_line
 
 Return JSON:
-{"is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0}"""
+{"decision": "accept|reject", "is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}"""
 
 
 def _load(name: str, fallback: str) -> str:

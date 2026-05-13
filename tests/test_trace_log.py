@@ -174,6 +174,29 @@ class TraceLogTests(unittest.TestCase):
 
         self.assertIn("confidence=0.6 < 0.75 -> rejected", trace._rows[0]["selection_reason"])
 
+    def test_summary_treats_reviewed_ai_found_as_matched(self) -> None:
+        trace = MatchTraceLog(enabled=True)
+        comp = parse_drug("AMRIZOLE N SUPP")
+        trace.log_final(
+            "D-1", "AMRIZOLE N SUPP", comp.normalized, comp.brand,
+            None, 0.0, "no_match", "search",
+            "no_match -> eligible for AI search",
+        )
+        trace.log_ai_search_result(
+            "D-1", "AMRIZOLE N SUPP", comp.normalized, comp.brand,
+            True, "AMRIZOLE N 5 VAG. SUPP.", 0.98,
+            accept_threshold=0.75,
+        )
+        trace.log_ai_review_result(
+            "D-1", "AMRIZOLE N SUPP", comp.normalized, comp.brand,
+            True, 0.98, "same product", "ai_found_reviewed",
+        )
+
+        row = trace._summary_rows()[0]
+
+        self.assertEqual(row["final_status"], "matched")
+        self.assertEqual(row["final_match"], "AMRIZOLE N 5 VAG. SUPP.")
+
     def test_post_cleanup_rejection_is_logged(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
         pipeline._trace = MatchTraceLog(enabled=True)

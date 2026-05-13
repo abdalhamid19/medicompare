@@ -13,4 +13,4 @@ Price context: $price_context
 Is this the SAME product? Apply the strict pharmaceutical matching rules.
 
 Return JSON only:
-{"is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0}
+{"decision": "accept|reject", "is_correct": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}

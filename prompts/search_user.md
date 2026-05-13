@@ -10,7 +10,7 @@ Candidates:
 $candidates_text
 
 Return JSON only:
-{"best_index": 0, "reason": "brief reason", "confidence": 0.0-1.0}
+{"decision": "accept|reject", "best_index": 0, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}
 
 `best_index` must be a JSON number only, not a string and not a range.
 Valid examples: 0, 1, 2. Invalid examples: "1", "1-$max_index", "1-1",

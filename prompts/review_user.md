@@ -15,4 +15,4 @@ Do you AGREE with the first AI? Apply the same strict pharmaceutical matching
 rules.
 
 Return JSON only:
-{"agree": true/false, "reason": "brief reason", "confidence": 0.0-1.0}
+{"decision": "agree|disagree", "agree": true/false, "reason": "brief reason", "confidence": 0.0-1.0, "hard_conflicts": [], "matched_fields": [], "mismatched_fields": []}

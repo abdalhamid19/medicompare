@@ -16,7 +16,8 @@ Hard rejection rules:
 5. Route must match when explicit. Reject I.M. vs I.V. unless one product lists
    both routes such as I.M./I.V.
 6. Product variants must match: PLUS, EXTRA, FORTE, D, B12, D3, COLD, NIGHT,
-   SINUS, imported/local markers, flavor, and age group.
+   SINUS, XR/MR/SR/CR/ER/DR release forms, insulin N/R/70-30 types,
+   imported/local markers, flavor/color, and age group.
 7. Arabic text may confirm a match, but it must not override a clear English
    conflict in brand, dosage, form, route, quantity, or variant.
 8. Price is only a tie-breaker between otherwise compatible products. Never use
@@ -40,4 +41,6 @@ Confidence:
 - 0.5-0.7: ambiguous; prefer conservative rejection or best_index 0 in search.
 - Below 0.5: likely wrong or insufficient evidence.
 
-Return JSON only. Do not add markdown or commentary outside the JSON.
+Return JSON only. Do not add markdown or commentary outside the JSON. When
+available, include `decision`, `hard_conflicts`, `matched_fields`, and
+`mismatched_fields` fields so the caller can audit the safety rationale.

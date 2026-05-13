@@ -412,7 +412,12 @@ class MatchPipeline:
             self._results["match_score"], errors="coerce",
         ).fillna(0)
         uncertain = has_match & (scores < self._cfg.ai_verify_threshold)
-        return self._results[(~has_match) | uncertain]
+        component_review = (
+            self._results["_ai_component_reason"].fillna("").astype(str) != ""
+            if "_ai_component_reason" in self._results.columns
+            else False
+        )
+        return self._results[(~has_match) | uncertain | component_review]
 
     def print_stats(self):
         """Print final statistics."""
@@ -477,6 +482,7 @@ class MatchPipeline:
             await self.run_ai_verification()
             await self.run_ai_search_unmatched()
             await self.run_ai_review()
+        self.run_post_cleanup()
         self.save(output_path)
         self.save_manual_review()
         self.print_stats()
