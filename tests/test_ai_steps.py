@@ -11,6 +11,7 @@ from drug_matcher.ai_steps import (
     run_ai_verification,
     run_ai_search,
     _select_for_verification,
+    _select_for_review,
     _build_verify_items,
     _get_unmatched,
     _search_candidates,
@@ -873,6 +874,24 @@ class TestAiSearchEligibility(unittest.TestCase):
 
         self.assertEqual(reason, "different_brand")
         self.assertEqual(threshold, 0.85)
+
+    def test_review_selects_component_mismatch_ai_found(self):
+        results = _make_results([
+            {
+                "code": "D1", "drug_name": "ADMLASE SYRUP 120 ML",
+                "matched_product_name_en": "AMYLASE SYRUP 90 ML",
+                "matched_product_name_ar": "اميليز",
+                "matched_store_product_id": "T-1",
+                "match_score": 87.0, "verified": "ai_found",
+                "match_method": "ai_search",
+            },
+        ])
+        results["_ai_component_reason"] = "different_brand"
+        results["ai_confidence"] = 0.99
+
+        selected = _select_for_review(results, MatchingConfig(ai_review_threshold=0.95))
+
+        self.assertEqual(len(selected), 1)
 
     def test_search_candidate_limit_expands_candidates(self):
         index = _make_index()

@@ -52,6 +52,8 @@ def _api_error_code(status: int, text: str) -> str:
 
 def _extract_json(text: str) -> dict | None:
     """Extract JSON from model response, handling markdown code blocks and truncation."""
+    if not isinstance(text, str) or not text:
+        return None
     # Try direct parse
     try:
         return json.loads(text)
@@ -497,11 +499,13 @@ class AIVerifier:
                                     )
                                     break  # try next (key, model) combo
                                 data = await resp.json()
-                                content = data["choices"][0]["message"]["content"]
+                                content = data["choices"][0]["message"].get("content")
+                                content_text = content if isinstance(content, str) else ""
                                 result = _extract_json(content)
                                 if result is None:
+                                    error_code = "null_content" if content is None else "invalid_json"
                                     disabled = self._record_combo_failure(
-                                        key, mdl, "invalid_json",
+                                        key, mdl, error_code,
                                         provider=provider,
                                     )
                                     attempts.append({
@@ -513,14 +517,14 @@ class AIVerifier:
                                         "fallback_used": plan_idx > 0,
                                         "decision": "disabled" if disabled else "parse_failed",
                                         "error_stage": "ai_parse",
-                                        "error_code": "invalid_json",
+                                        "error_code": error_code,
                                         "parse_failed": True,
-                                        "reason": content[:200],
+                                        "reason": content_text[:200],
                                     })
-                                    last_unparseable = (content, mdl)
+                                    last_unparseable = (content_text, mdl)
                                     logger.warning(
-                                        "  ⚠ invalid JSON from model=%s",
-                                        mdl,
+                                        "  ⚠ %s from model=%s",
+                                        error_code, mdl,
                                     )
                                     break
                                 attempts.append({
@@ -679,7 +683,7 @@ class AIVerifier:
         else:
             decision_text = (
                 "CORRECT match"
-                if first_decision == "ai_confirmed"
+                if first_decision in {"ai_confirmed", "ai_corrected", "ai_found"}
                 else "INCORRECT match"
             )
             prompt = render_prompt(
@@ -732,8 +736,11 @@ class AIVerifier:
                 "_api_attempts": result.get("_api_attempts", []),
             }
         agree = bool(result.get("agree", True))
+        first_ai_said_correct = first_decision in {
+            "ai_confirmed", "ai_corrected", "ai_found",
+        }
         return {
-            "is_correct": agree if first_decision == "ai_confirmed" else not agree,
+            "is_correct": agree if first_ai_said_correct else not agree,
             "reason": str(result.get("reason", "")),
             "confidence": float(result.get("confidence", first_confidence)),
             "model_used": result.get("model_used", ""),

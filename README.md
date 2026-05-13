@@ -78,7 +78,7 @@ python run_matcher.py --provider opencode --trace --ai-search-limit 200
 # اختبار كل مزودي AI المتاحين وترتيبهم للـ rotation
 
 # تشغيل بنظام AI rotation بين كل providers الصالحة
-python run_matcher.py --provider rotation --trace --ai-search-limit 200
+python run_matcher.py --provider rotation --review-model rotation --trace --ai-search-limit 200
 
 # تشغيل rotation مع موديل مراجعة ثاني من rotation وتوازي 4 طلبات
 python run_matcher.py --provider rotation --review-model rotation --concurrency 4
@@ -166,12 +166,14 @@ python run_matcher.py --provider rotation --trace --ai-search-limit 200
 لزيادة عدد الحالات التي تدخل AI بدون فتحها عشوائياً:
 
 ```bash
-python run_matcher.py --provider rotation --trace --concurrency 4 \
+python run_matcher.py --provider rotation --review-model rotation --trace --concurrency 4 \
   --ai-threshold 95 --ai-verify-policy fuzzy \
   --ai-search-policy review-candidates --ai-search-min-candidate-score 80 \
   --ai-search-review-candidate-min-score 68 \
   --ai-search-candidate-limit 8 --ai-search-review-accept-confidence 0.85
 ```
+
+لا يتم تشغيل post-cleanup كمرحلة نهائية افتراضية؛ بدلاً من ذلك تُراجع نتائج AI الحساسة بموديل مراجعة عند استخدام `--review-model rotation` وتطبق قواعد المكونات قبل القبول.
 
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج
 افتراضياً `smart` preflight فيختبر عينة محدودة ومتوازنة من attempts بدل

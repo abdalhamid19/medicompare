@@ -498,6 +498,7 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
         and acceptance_reason != "unsafe_component_mismatch"
     ):
         match_name = ai_result["record"]["product_name_en"]
+        ai_result["_component_reason"] = acceptance_reason
         _apply_search_result(results, row.name, ai_result)
         if trace and trace.enabled:
             trace.log_ai_search_result(
@@ -698,6 +699,9 @@ def _apply_search_result(results, idx, ai_result):
     results.at[idx, "verified"] = "ai_found"
     results.at[idx, "match_method"] = "ai_search"
     results.at[idx, "ai_confidence"] = round(ai_result.get("confidence", 0), 2)
+    component_reason = ai_result.get("_component_reason", "")
+    if component_reason and component_reason != "ok":
+        results.at[idx, "_ai_component_reason"] = component_reason
     _set_internal_matched_price(results, idx, rec.get("price", ""))
 
 
@@ -743,6 +747,12 @@ def _select_for_review(results, cfg):
     if len(ai_verified) == 0:
         return ai_verified
     confidences = pd.to_numeric(ai_verified["ai_confidence"], errors="coerce")
+    component_reasons = (
+        ai_verified["_ai_component_reason"].astype(str)
+        if "_ai_component_reason" in ai_verified.columns
+        else pd.Series("", index=ai_verified.index)
+    )
+    component_review = ai_verified[component_reasons != ""]
     # API-failed items (confidence == 0) need fresh verification
     api_failed = ai_verified[confidences == 0.0]
     # Genuine low-confidence items need normal review
@@ -751,7 +761,7 @@ def _select_for_review(results, cfg):
         genuine_confidences = pd.to_numeric(genuine["ai_confidence"], errors="coerce")
         genuine = genuine[genuine_confidences < cfg.ai_review_threshold]
     # Combine both groups
-    return pd.concat([api_failed, genuine]) if len(api_failed) > 0 else genuine
+    return pd.concat([api_failed, genuine, component_review]).drop_duplicates()
 
 
 def _build_review_items(to_review):
@@ -767,7 +777,8 @@ def _build_review_items(to_review):
             first_confidence = 0.0
         # Mark items where first AI had API failure (confidence=0 from fallback)
         is_api_failed = first_confidence == 0.0
-        first_reason = "API unavailable - no first AI decision was made" if is_api_failed else ""
+        component_reason = str(row.get("_ai_component_reason", ""))
+        first_reason = "API unavailable - no first AI decision was made" if is_api_failed else component_reason
         items.append((
             drug_a, drug_b or "", drug_b_ar or "", first_decision,
             first_confidence, first_reason, idx, is_api_failed,
@@ -883,7 +894,7 @@ async def _apply_review_results(
                     )
                 continue
             overridden += 1
-            if first_decision in ("ai_confirmed", "ai_corrected"):
+            if first_decision in ("ai_confirmed", "ai_corrected", "ai_found"):
                 # First AI said correct, second says wrong -> reject
                 _clear_match(results, idx)
                 results.at[idx, "verified"] = "ai_review_rejected"

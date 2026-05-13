@@ -110,6 +110,11 @@ class NormalizerTests(unittest.TestCase):
             ("PANADOL EXTRA 24 TAB IMP", "PANADOL EXTRA 24 F.C. TAB", "different_import_status"),
             ("ASPOCID INF 30TAB", "ASPOCID 75 MG 30 TAB", "different_age_group"),
             ("CEFTRIAXONE 1 GM I.M. VIAL", "CEFTRIAXONE 1 GM I.V. VIAL", "different_route"),
+            ("DIAMICRON 60 MR 30 TAB", "DIAMICRON MR 30 MG 30 TAB.", "different_dosage"),
+            ("CENTRUM FOR MEN 30 TAB", "CENTRUM WOMEN 30 TAB", "different_modifier"),
+            ("INSULINAGYPT R 100 UNITS 10 ML", "INSULINAGYPT 70 / 30 100 I.U. / ML ( 10 ML) VIAL", "different_modifier"),
+            ("BETADINE 10% PRONTO 120 ML", "BETADINE VAGINAL DOUCHE 10 % 120 ML", "different_modifier"),
+            ("GROWTH FORMULA ADULT CHOCOLATE", "GROWTH FORMULA FOR KIDS 400 GM POWDER CHOCOLATE", "different_age_group"),
         ]
         for left, right, reason in cases:
             with self.subTest(left=left, right=right):
@@ -129,6 +134,16 @@ class NormalizerTests(unittest.TestCase):
             ("CEFTRIAXONE 1 GM I.M. VIAL", "CEFTRIAXONE 1 GM I.M / I.V VIAL"),
             ("AUGMENTIN DUO 200/28 MG/5 ML SUSP", "AUGMENTIN DUO 228 MG / 5 ML SUSP"),
             ("DOSTINEX .5 MG 2TAB", "DOSTINEX 0.5 MG 2 TAB"),
+            ("BRETT VAG WASH 250ML", "BRETT VAGINAL WASH 250 ML"),
+            ("ACYCLOVIR 400 MG 35 TAB", "ACYCLOVIR 400 STADA 35 TAB."),
+            ("ADWIFLAM 50.ER. 20CAP", "ADWIFLAM 50 MG E.R. 20 CAPS."),
+            ("ALBOTHYL 8 SUPP", "ALBOTHYL 90 MG 8 VAG. SUPP."),
+            ("alphalipo 600 20tab", "ALPHALIPO 600 MG 20 F.C. TABS"),
+            ("ALPHAVIM 300 - 20 CAPS", "ALPHAVIM 300 MG 20 CAPS"),
+            ("AMRIZOLE N SUPP", "AMRIZOLE N 5 VAG. SUPP."),
+            ("ANDOCANDOXIN 200 VAGINAL CAP", "ANDOCANDOXIN 200 MG 3 VAGINAL CAPS."),
+            ("ANGIOFOX 20M", "ANGIOFOX (EFFOX) 20 MG 20 TABS."),
+            ("ANORO ELLIPTA 62.5/25", "ANORO ELLIPTA 62.5 / 25 MCG INHALER 30 METERED DOSES"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

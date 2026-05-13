@@ -441,10 +441,22 @@ class MatchTraceLog:
         row["score"] = round(float(confidence), 2) if confidence not in (None, "") else ""
         row["ai_model"] = model_used
         row["api_failures"] = api_failures
+        confidence_text = (
+            round(float(confidence), 2)
+            if confidence not in (None, "") else "N/A"
+        )
+        if found:
+            threshold_text = f" >= {accept_threshold} -> accepted"
+        elif confidence not in (None, "") and float(confidence) < float(accept_threshold):
+            threshold_text = f" < {accept_threshold} -> rejected"
+        elif error_code:
+            threshold_text = f" error={error_code} -> rejected"
+        else:
+            threshold_text = f" >= {accept_threshold} but no accepted record -> rejected"
         row["selection_reason"] = (
             f"AI_model={model_used}"
-            f" confidence={round(float(confidence), 2) if confidence not in (None, '') else 'N/A'}"
-            f" >= {accept_threshold} -> {'accepted' if found else 'rejected'}"
+            f" confidence={confidence_text}"
+            f"{threshold_text}"
         )
         if api_failures:
             row["selection_reason"] += f" | API_failures: {api_failures}"

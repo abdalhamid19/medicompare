@@ -17,6 +17,7 @@ from drug_matcher.verifier import (
     AIVerifier,
     SYSTEM_PROMPT,
     _api_error_code,
+    _extract_json,
     _fallback_from_unparseable_response,
 )
 
@@ -36,6 +37,9 @@ class AIVerifierTests(unittest.TestCase):
 
         self.assertEqual([item["row_idx"] for item in results], [10, 20])
         self.assertTrue(all(item["reason"] == "no_api_key" for item in results))
+
+    def test_extract_json_rejects_null_content(self) -> None:
+        self.assertIsNone(_extract_json(None))
 
     def test_find_better_match_without_api_key_returns_none(self) -> None:
         verifier = AIVerifier(APIConfig(api_key=""))
@@ -315,6 +319,26 @@ class AIVerifierTests(unittest.TestCase):
         self.assertTrue(result["is_correct"])
         self.assertLessEqual(result["confidence"], 0.5)
         self.assertTrue(result["parse_failed"])
+
+    def test_review_agreement_confirms_ai_found(self) -> None:
+        verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))
+
+        async def fake_call(self, payload):
+            return {"agree": True, "reason": "same product", "confidence": 0.98}
+
+        with patch.object(AIVerifier, "_call_api", new=fake_call):
+            result = asyncio.run(
+                verifier.review_one(
+                    "AMRIZOLE N SUPP",
+                    "AMRIZOLE N 5 VAG. SUPP.",
+                    "ai_found",
+                    0.98,
+                    "different_modifier",
+                )
+            )
+
+        self.assertTrue(result["is_correct"])
+        self.assertEqual(result["confidence"], 0.98)
 
     def test_fresh_review_invalid_json_rejects_conservatively(self) -> None:
         verifier = AIVerifier(APIConfig(api_key="test-key", review_model="review"))

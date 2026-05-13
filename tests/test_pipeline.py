@@ -128,6 +128,38 @@ class PipelineTests(unittest.TestCase):
             row = results.iloc[0]
             self.assertEqual(row["matched_store_product_id"], "right-price")
 
+    def test_start_and_limit_select_following_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            drugs_path = tmp_path / "drugs.csv"
+            tawreed_path = tmp_path / "tawreed.csv"
+
+            pd.DataFrame(
+                [
+                    {"كود": "D-1", "إسم الصنف": "FIRST 10 MG 10 TAB"},
+                    {"كود": "D-2", "إسم الصنف": "SECOND 10 MG 10 TAB"},
+                    {"كود": "D-3", "إسم الصنف": "THIRD 10 MG 10 TAB"},
+                    {"كود": "D-4", "إسم الصنف": "FOURTH 10 MG 10 TAB"},
+                ]
+            ).to_csv(drugs_path, index=False, encoding="utf-8-sig")
+            pd.DataFrame(
+                [
+                    {
+                        "product_name_ar": "ثاني",
+                        "product_name_en": "SECOND 10 MG 10 TAB",
+                        "store_product_id": "T-2",
+                    },
+                ]
+            ).to_csv(tawreed_path, index=False, encoding="utf-8-sig")
+
+            pipeline = MatchPipeline(
+                cfg=MatchingConfig(), api_cfg=None, start=1, limit=2,
+            )
+            pipeline.load_data(str(drugs_path), str(tawreed_path))
+            results = pipeline.run_matching()
+
+            self.assertEqual(results["code"].tolist(), ["D-2", "D-3"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -55,7 +55,9 @@ VITAMIN_MODIFIERS = frozenset({
 })
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
-    "SINUS", "D",
+    "SINUS", "D", "R", "MEN", "WOMEN", "MALE", "FEMALE",
+    "XR", "XL", "SR", "CR", "MR", "PRONTO", "VAGINAL", "NASAL",
+    "MOUTH",
 })
 COSMETIC_WORDS = frozenset({
     "BODY", "CONCEALER", "COSMETIC", "CREAM", "DEODORANT", "DOUCHE",
@@ -84,6 +86,7 @@ SOLID_FORMS = frozenset({"TAB", "CAP"})
 PEDIATRIC_WORDS = frozenset({
     "PAEDIATRIC", "PEDIATRIC", "INFANT", "INFANTS", "INFANTILE", "KID", "KIDS",
 })
+ADULT_WORDS = frozenset({"ADULT", "ADULTS"})
 INFUSION_CONTEXT_WORDS = frozenset({
     "I", "V", "IV", "I/V", "INJ", "INJECTION", "INFUSION", "VIAL", "AMP", "AMPS",
 })
@@ -93,6 +96,7 @@ FORM_SCAN_ORDER = (
     "SYP", "SUSP",
     "DROPS", "DROP", "EYE", "OPHTALMIC", "GEL", "CREAM",
     "POWDER", "SHAMPOO", "CLEANSER", "WASH", "SOLUTION",
+    "SUPPS", "SUPP",
     "TABLETS", "TABLET", "TABS", "TAB", "CAPSULES",
     "CAPSULE", "CAPS", "CAP", "DOSES",
 )
@@ -129,10 +133,10 @@ _COMBO_MG_PER_ML_RE = re.compile(
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(
     r"(\d+)\s*"
-    r"(?:(?:F\s*C|FC|SCORED|CHEWABLE)\s*)?"
+    r"(?:(?:F\s*C|FC|SCORED|CHEWABLE|VAGINAL|VAG)\s*)?"
     r"(TABLETS|TABLET|TABS|TAB|CAPSULES|CAPSULE|CAPS|CAP|SACHETS|SACHET|"
-    r"SACH|AMPS|AMP|VIAL|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|"
-    r"PACKETS)\b",
+    r"SACH|AMPS|AMP|VIAL|SUPPS|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|"
+    r"PACKETS|DOSES)\b",
     re.IGNORECASE,
 )
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
@@ -167,10 +171,12 @@ def normalize(name: str) -> str:
     name = re.sub(r"(?<=\d)O(?=\d)", "0", name)
     name = re.sub(r"\bFORET\b", "FORTE", name)
     name = re.sub(r"\b(SYRP|SYP)\b", "SYRUP", name)
+    name = re.sub(r"\bVAG\b", "VAGINAL", name)
     name = name.replace("*", " / ")
     # Split compact drug notation before parsing: PANADOL20MG -> PANADOL 20 MG, 30TAB -> 30 TAB
     name = re.sub(r"([A-Z])(?=\d)", r"\1 ", name)
     name = re.sub(r"(?<=\d)([A-Z])", r" \1", name)
+    name = re.sub(r"\b(\d+)\s*M\b", r"\1 MG", name)
     name = re.sub(r"\b(\d+)\s*M\s*/", r"\1 MG /", name)
     name = re.sub(
         r"\bANDOFLOZIN XR 25 MG\s*/\s*100 MG\b",
@@ -185,6 +191,7 @@ def normalize(name: str) -> str:
     # Remove dots but NOT between digits that form a decimal (e.g. 0.5, 2.5)
     name = re.sub(r'\.(?!\d)', ' ', name)
     name = re.sub(r'(?<!\d)\.', ' ', name)
+    name = re.sub(r"\b([ESCM])\s+R\b", r"\1R", name)
     name = re.sub(r"\s+", " ", name).strip()
     return name
 
@@ -258,6 +265,16 @@ def parse_drug(name: str) -> DrugComponents:
             break
     if form == "SUSP" and ({"EYE", "DROPS"} & norm_words):
         form = "EYE"
+    if (
+        not dosage_nums and qty and qty.isdigit()
+        and int(qty) >= 100
+        and "VAGINAL" in norm_words and form in {"CAP", "SUPP"}
+    ):
+        qty = ""
+    if not dosage_nums:
+        dosage_nums, dosage_units = _infer_missing_dosage(
+            norm, qty, volume, weight, form,
+        )
     flavor = ""
     for fw in FLAVOR_WORDS:
         if fw in norm_words:
@@ -295,9 +312,44 @@ def _canonical_form(word: str) -> str:
         return "VIAL"
     if word in {"AMP", "AMPS"}:
         return "AMP"
+    if word in {"SUPP", "SUPPS"}:
+        return "SUPP"
     if word in {"SYRP", "SYP"}:
         return "SYRUP"
     return word
+
+
+def _infer_missing_dosage(
+    norm: str,
+    qty: str,
+    volume: str,
+    weight: str,
+    form: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    slash = re.search(r"\b\d+(?:\.\d+)?\s*/\s*\d+(?:\.\d+)?\b", norm)
+    if slash:
+        return (re.sub(r"\s+", "", slash.group(0)),), ("MG",)
+    nums = re.findall(r"\b\d+(?:\.\d+)?\b", norm)
+    consumed = [value for value in (qty, volume, weight) if value]
+    remaining: list[str] = []
+    for num in nums:
+        normalized = _canonical_number(num)
+        consumed_idx = next(
+            (
+                idx for idx, value in enumerate(consumed)
+                if _canonical_number(value) == normalized
+            ),
+            None,
+        )
+        if consumed_idx is not None:
+            consumed.pop(consumed_idx)
+        else:
+            remaining.append(normalized)
+    if len(remaining) != 1:
+        return (), ()
+    if qty or form in {"TAB", "CAP", "SUPP", "AMP", "VIAL", "SPRAY"}:
+        return (remaining[0],), ("MG",)
+    return (), ()
 
 
 def _is_brand_boundary(words: list[str], idx: int) -> bool:
@@ -357,6 +409,10 @@ def brand_variants_from_words(
     return tuple(variants)
 
 
+def _canonical_number(value: str) -> str:
+    return str(float(value)).rstrip("0").rstrip(".") if "." in value else value
+
+
 def _dosage_parts(nums: tuple[str, ...]) -> list[str]:
     parts: list[str] = []
     for num in nums:
@@ -368,6 +424,18 @@ def _modifier_is_optional(modifier: str, d_words: set[str], m_words: set[str]):
     if modifier == "ADVANCE" and "MILK" in d_words and "MILK" in m_words:
         return True
     if modifier == "EXTRA" and ("EMOLLIENT" in d_words or "EMOLLIENT" in m_words):
+        return True
+    if modifier == "NASAL" and (
+        {"SPRAY", "SPRAYS", "DOSES"} & d_words
+    ) and (
+        {"SPRAY", "SPRAYS", "DOSES"} & m_words
+    ):
+        return True
+    if modifier == "VAGINAL" and (
+        {"SUPP", "SUPPS", "CAP", "CAPS", "CAPSULE", "CAPSULES"} & d_words
+    ) and (
+        {"SUPP", "SUPPS", "CAP", "CAPS", "CAPSULE", "CAPSULES"} & m_words
+    ):
         return True
     return False
 
@@ -384,6 +452,10 @@ def _has_pediatric_signal(words: set[str]) -> bool:
     if "INF" not in words:
         return False
     return not bool(words & INFUSION_CONTEXT_WORDS)
+
+
+def _has_adult_signal(words: set[str]) -> bool:
+    return bool(words & ADULT_WORDS)
 
 
 def _route_signals(words: set[str]) -> frozenset[str]:
@@ -441,6 +513,27 @@ def _summed_combo_matches_single(left: list[str], right: list[str]) -> bool:
     return False
 
 
+def _unmatched_numeric_signals(c: DrugComponents) -> tuple[str, ...]:
+    nums = re.findall(r"\b\d+(?:\.\d+)?\b", c.normalized)
+    consumed = list(_dosage_parts(c.dosage_nums))
+    consumed.extend(v for v in (c.qty, c.volume, c.weight) if v)
+    out: list[str] = []
+    for num in nums:
+        normalized = str(float(num)).rstrip("0").rstrip(".") if "." in num else num
+        consumed_idx = next(
+            (
+                idx for idx, value in enumerate(consumed)
+                if value == num or value == normalized
+            ),
+            None,
+        )
+        if consumed_idx is not None:
+            consumed.pop(consumed_idx)
+        else:
+            out.append(normalized)
+    return tuple(out)
+
+
 def components_match(
     d: DrugComponents,
     m: DrugComponents,
@@ -461,7 +554,13 @@ def components_match(
             if _modifier_is_optional(modifier, d_words, m_words):
                 continue
             return False, "different_modifier"
-    if _has_pediatric_signal(d_words) and not _has_pediatric_signal(m_words):
+    d_pediatric = _has_pediatric_signal(d_words)
+    m_pediatric = _has_pediatric_signal(m_words)
+    if d_pediatric != m_pediatric:
+        return False, "different_age_group"
+    if (_has_adult_signal(d_words) and m_pediatric) or (
+        _has_adult_signal(m_words) and d_pediatric
+    ):
         return False, "different_age_group"
 
     if d_clean and m_clean:
@@ -487,8 +586,19 @@ def components_match(
                 return False, "different_brand"
 
     # Dosage check
+    dosage_checked_compatible = False
     if d.dosage_nums and m.dosage_nums:
         if not _dosage_compatible(d, m):
+            return False, "different_dosage"
+        dosage_checked_compatible = True
+    if not dosage_checked_compatible:
+        d_numeric = _unmatched_numeric_signals(d)
+        m_numeric = _unmatched_numeric_signals(m)
+        if d_numeric and m.dosage_nums:
+            return False, "different_dosage"
+        if m_numeric and d.dosage_nums:
+            return False, "different_dosage"
+        if d_numeric and m_numeric and d_numeric != m_numeric:
             return False, "different_dosage"
 
     if d.form and m.form and not _forms_compatible(d.form, m.form):

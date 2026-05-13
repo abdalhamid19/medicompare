@@ -66,15 +66,14 @@ class MatchPipeline:
         tawreed = pd.read_csv(
             tawreed_path, encoding="utf-8-sig", dtype=str,
         )
-        if self._limit:
-            drugs = drugs.head(self._limit)
-            logger.info(f"Limit applied: processing {len(drugs)} drugs")
-        # Apply start/end slice (0-indexed, end is exclusive)
         if self._start is not None or self._end is not None:
             s = self._start or 0
             e = self._end or len(drugs)
             drugs = drugs.iloc[s:e].reset_index(drop=True)
             logger.info(f"Slice applied: rows {s}-{e-1} ({len(drugs)} drugs)")
+        if self._limit:
+            drugs = drugs.head(self._limit)
+            logger.info(f"Limit applied: processing {len(drugs)} drugs")
         self._drugs_df = drugs
         self._index = DrugIndex(tawreed, self._cfg)
         logger.info(
@@ -92,7 +91,7 @@ class MatchPipeline:
         for row_index, row in enumerate(self._drugs_df.itertuples(index=False)):
             rec, score, method = self._match_one(row, stats, row_index)
             results.append(self._make_row(row, rec, score, method, stats))
-        self._results = pd.DataFrame(results)
+        self._results = pd.DataFrame(results, columns=_RESULT_COLS if not results else None)
         # Allow mixed str/float in numeric-optional columns
         for col in ("match_score", "ai_confidence", "ai_review_confidence"):
             if col in self._results.columns:
@@ -478,7 +477,6 @@ class MatchPipeline:
             await self.run_ai_verification()
             await self.run_ai_search_unmatched()
             await self.run_ai_review()
-        self.run_post_cleanup()
         self.save(output_path)
         self.save_manual_review()
         self.print_stats()

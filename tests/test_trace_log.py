@@ -160,6 +160,20 @@ class TraceLogTests(unittest.TestCase):
         self.assertEqual(trace._rows[1]["step"], "rotation_attempt_used")
         self.assertEqual(trace._rows[1]["provider_used"], "groq")
 
+    def test_ai_search_rejection_reason_uses_actual_threshold_direction(self) -> None:
+        trace = MatchTraceLog(enabled=True)
+        comp = parse_drug("ADMLASE SYRUP 120 ML")
+
+        trace.log_ai_search_result(
+            "D-1", "ADMLASE SYRUP 120 ML", comp.normalized, comp.brand,
+            False, None, 0.6,
+            model_used="model-a",
+            accept_threshold=0.75,
+            error_code="best_index_0",
+        )
+
+        self.assertIn("confidence=0.6 < 0.75 -> rejected", trace._rows[0]["selection_reason"])
+
     def test_post_cleanup_rejection_is_logged(self) -> None:
         pipeline = MatchPipeline(cfg=MatchingConfig(), api_cfg=None)
         pipeline._trace = MatchTraceLog(enabled=True)
