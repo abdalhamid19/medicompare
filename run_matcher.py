@@ -123,9 +123,18 @@ def _apply_preflight(api_cfg, rows):
 def _review_rotation_attempts(attempts):
     if len(attempts) <= 1:
         return tuple(attempts)
-    primary = attempts[0].safe_tuple()
-    alternates = [attempt for attempt in attempts if attempt.safe_tuple() != primary]
-    return tuple(alternates or attempts)
+    primary = attempts[0]
+    primary_key = primary.safe_tuple()
+    primary_strength = _attempt_strength(primary)
+    return tuple(
+        attempt for attempt in attempts
+        if attempt.safe_tuple() != primary_key
+        and _attempt_strength(attempt) <= primary_strength
+    )
+
+
+def _attempt_strength(attempt):
+    return attempt.rotation_tier, attempt.quality_rank
 
 
 def _rotation_api_config(

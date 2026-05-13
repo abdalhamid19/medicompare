@@ -128,6 +128,11 @@ async def run_ai_review(
         if trace and trace.enabled:
             _trace_skip_all_review(results, trace, "no_review_model")
         return results
+    if api_cfg.review_model == "rotation" and not api_cfg.review_attempt_plan:
+        logger.info("No strong review model available - skipping AI review")
+        if trace and trace.enabled:
+            _trace_skip_all_review(results, trace, "no_strong_review_model")
+        return results
     to_review = _select_for_review(results, cfg)
     if len(to_review) == 0:
         logger.info("No low-confidence AI decisions to review")

@@ -288,15 +288,37 @@ class AIVerifier:
     def _rotation_attempts_for(self, requested_model: str = ""):
         attempts = self._cfg.attempt_plan
         if requested_model == "rotation" and self._cfg.review_attempt_plan:
-            return self._cfg.review_attempt_plan
+            return self._strong_enough_review_attempts(
+                self._cfg.review_attempt_plan,
+            )
         elif requested_model and requested_model != self._cfg.model:
             matching = tuple(
                 attempt for attempt in attempts
                 if attempt.model == requested_model
             )
             if matching:
-                return matching
+                return self._strong_enough_review_attempts(matching)
         return attempts
+
+    def _strong_enough_review_attempts(self, attempts):
+        primary = self._primary_rotation_attempt()
+        if primary is None:
+            return tuple(attempts)
+        primary_strength = self._attempt_strength(primary)
+        return tuple(
+            attempt for attempt in attempts
+            if self._attempt_strength(attempt) <= primary_strength
+        )
+
+    def _primary_rotation_attempt(self):
+        for attempt in self._cfg.attempt_plan:
+            if attempt.model == self._cfg.model:
+                return attempt
+        return self._cfg.attempt_plan[0] if self._cfg.attempt_plan else None
+
+    @staticmethod
+    def _attempt_strength(attempt) -> tuple[int, int]:
+        return attempt.rotation_tier, attempt.quality_rank
 
     def _rotated_tier_plan(
         self, attempts, requested_model: str, tier: int, *, advance: bool,

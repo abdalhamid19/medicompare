@@ -336,17 +336,24 @@ class AIRotationTests(unittest.TestCase):
             "groq", "https://api.groq.com/openai/v1", "GROQ_API_KEY_1",
             "gsk-primary111111", "openai/gpt-oss-120b", 1,
         )
-        reviewer = AIModelAttempt(
+        weak_reviewer = AIModelAttempt(
             "openrouter", "https://openrouter.ai/api/v1", "OPENROUTER_API_KEY",
             "sk-or-review222222", "openai/gpt-4o-mini", 2,
         )
+        strong_reviewer = AIModelAttempt(
+            "opencode", "https://opencode.ai/zen/v1", "OPENCODE_API_KEY",
+            "sk-review333333", "big-pickle", 1,
+        )
 
-        cfg = _rotation_api_config((primary, reviewer), review_model="rotation")
+        cfg = _rotation_api_config(
+            (primary, weak_reviewer, strong_reviewer),
+            review_model="rotation",
+        )
 
         self.assertEqual(cfg.model, "openai/gpt-oss-120b")
         self.assertEqual(cfg.review_model, "rotation")
-        self.assertEqual(cfg.attempt_plan, (primary, reviewer))
-        self.assertEqual(cfg.review_attempt_plan, (reviewer,))
+        self.assertEqual(cfg.attempt_plan, (primary, weak_reviewer, strong_reviewer))
+        self.assertEqual(cfg.review_attempt_plan, (strong_reviewer,))
 
     def test_smart_preflight_enough_requires_count_and_provider_diversity(self):
         rows = [
