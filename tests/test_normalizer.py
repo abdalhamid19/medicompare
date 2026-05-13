@@ -144,6 +144,16 @@ class NormalizerTests(unittest.TestCase):
             ("ANDOCANDOXIN 200 VAGINAL CAP", "ANDOCANDOXIN 200 MG 3 VAGINAL CAPS."),
             ("ANGIOFOX 20M", "ANGIOFOX (EFFOX) 20 MG 20 TABS."),
             ("ANORO ELLIPTA 62.5/25", "ANORO ELLIPTA 62.5 / 25 MCG INHALER 30 METERED DOSES"),
+            ("ANTODINE 6 AMPOULES * 2 ML", "ANTODINE 20 MG / 2 ML 6 I.M. OR I.V. AMP"),
+            ("APIDRA 5 CARTRIDGES", "APIDRA 100 I.U. / ML 5 CARTIRIDGES"),
+            ("APIDRA SOLOSTAR 5 PENS", "APIDRA SOLOSTAR 100 I.U. / ML 5 PREFILLED PEN"),
+            ("AUGMENTIN ES 600 MG 75ML SYP", "AUGMENTIN ES 600 PD. FOR ORAL SUSP. 75 ML"),
+            ("AUGRAM 228.5 60ML SYRUP", "AUGRAM 228.5 MG / 5 ML PD. FOR ORAL SUSP. 60 ML"),
+            ("azrolid 200 syrup 30 ml", "AZROLID 1200 / 30 ML SUSP"),
+            ("AZROLID 200MG/5ML 15 ML SUSP", "AZROLID 600 / 15 ML SUSP"),
+            ("BECLOSONE FORTE 200 METERED", "BECLOSONE FORTE INHALER 0.1 MG / DOSE 200 DOSES"),
+            ("BETMIGA 50 MG 30 TAB", "BETMIGA 50 MG 30 PROLONGED R.TABLETS"),
+            ("BETOLVEX 2 pre-filled AMP", "BETOLVEX 1 MG / ML 2 PRE FILLED SYRINGE I.M."),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

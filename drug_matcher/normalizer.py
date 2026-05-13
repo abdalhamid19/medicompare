@@ -92,8 +92,9 @@ INFUSION_CONTEXT_WORDS = frozenset({
 })
 ROUTE_WORDS = frozenset({"IM", "IV", "SC"})
 FORM_SCAN_ORDER = (
-    "VIAL", "VIALS", "AMP", "AMPS", "SPRAY", "SPRAYS", "SYRUP", "SYRP",
-    "SYP", "SUSP",
+    "VIAL", "VIALS", "AMPOULES", "AMPOULE", "AMP", "AMPS",
+    "PENS", "PEN", "CARTRIDGES", "CARTIRIDGES", "CARTRIDGE",
+    "SPRAY", "SPRAYS", "METERED", "SYRUP", "SYRP", "SYP", "SUSP",
     "DROPS", "DROP", "EYE", "OPHTALMIC", "GEL", "CREAM",
     "POWDER", "SHAMPOO", "CLEANSER", "WASH", "SOLUTION",
     "SUPPS", "SUPP",
@@ -133,10 +134,12 @@ _COMBO_MG_PER_ML_RE = re.compile(
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
 _QTY_RE = re.compile(
     r"(\d+)\s*"
-    r"(?:(?:F\s*C|FC|SCORED|CHEWABLE|VAGINAL|VAG)\s*)?"
+    r"(?:(?:F\s*C|FC|SCORED|CHEWABLE|VAGINAL|VAG|PRE\s*FILLED|"
+    r"PREFILLED|METERED)\s*)?"
     r"(TABLETS|TABLET|TABS|TAB|CAPSULES|CAPSULE|CAPS|CAP|SACHETS|SACHET|"
-    r"SACH|AMPS|AMP|VIAL|SUPPS|SUPP|PIECE|DROPS|PEN|CARTRIDGE|GUMMIES|GUM|"
-    r"PACKETS|DOSES)\b",
+    r"SACH|AMPOULES|AMPOULE|AMPS|AMP|VIAL|SUPPS|SUPP|PIECE|DROPS|"
+    r"PENS|PEN|CARTRIDGES|CARTIRIDGES|CARTRIDGE|SYRINGES|SYRINGE|"
+    r"GUMMIES|GUM|PACKETS|DOSES|METERED)\b",
     re.IGNORECASE,
 )
 _VOL_RE = re.compile(r"(\d+)\s*ML\b", re.IGNORECASE)
@@ -304,14 +307,18 @@ def _canonical_form(word: str) -> str:
         return "TAB"
     if word in {"CAP", "CAPS", "CAPSULE", "CAPSULES"}:
         return "CAP"
-    if word in {"SPRAY", "SPRAYS", "DOSES"}:
+    if word in {"SPRAY", "SPRAYS", "DOSES", "METERED"}:
         return "SPRAY"
     if word in {"DROPS", "DROP", "OPHTALMIC", "EYE"}:
         return "EYE"
     if word in {"VIAL", "VIALS"}:
         return "VIAL"
-    if word in {"AMP", "AMPS"}:
+    if word in {"AMP", "AMPS", "AMPOULE", "AMPOULES"}:
         return "AMP"
+    if word in {"PEN", "PENS"}:
+        return "PEN"
+    if word in {"CARTRIDGE", "CARTRIDGES", "CARTIRIDGES"}:
+        return "CARTRIDGE"
     if word in {"SUPP", "SUPPS"}:
         return "SUPP"
     if word in {"SYRP", "SYP"}:
@@ -347,7 +354,11 @@ def _infer_missing_dosage(
             remaining.append(normalized)
     if len(remaining) != 1:
         return (), ()
-    if qty or form in {"TAB", "CAP", "SUPP", "AMP", "VIAL", "SPRAY"}:
+    if (
+        qty
+        or form in {"TAB", "CAP", "SUPP", "AMP", "VIAL", "SPRAY"}
+        or (volume and form in {"SYRUP", "SUSP"})
+    ):
         return (remaining[0],), ("MG",)
     return (), ()
 
@@ -437,6 +448,8 @@ def _modifier_is_optional(modifier: str, d_words: set[str], m_words: set[str]):
         {"SUPP", "SUPPS", "CAP", "CAPS", "CAPSULE", "CAPSULES"} & m_words
     ):
         return True
+    if modifier == "R" and "PROLONGED" in (d_words | m_words):
+        return True
     return False
 
 
@@ -488,6 +501,8 @@ def _dosage_compatible(d: DrugComponents, m: DrugComponents) -> bool:
         return True
     if _summed_combo_matches_single(d_parts, m_parts):
         return True
+    if _liquid_total_matches_per_5(d_parts, m_parts, d, m):
+        return True
     forms = {d.form, m.form}
     if not forms & LIQUID_DOSE_FORMS:
         return False
@@ -496,6 +511,36 @@ def _dosage_compatible(d: DrugComponents, m: DrugComponents) -> bool:
     if len(m_parts) == 1 and len(d_parts) > 1 and m_parts[0] == d_parts[0]:
         return True
     return False
+
+
+def _liquid_total_matches_per_5(
+    left: list[str],
+    right: list[str],
+    d: DrugComponents,
+    m: DrugComponents,
+) -> bool:
+    forms = {d.form, m.form}
+    if not forms & LIQUID_DOSE_FORMS:
+        return False
+    try:
+        if len(left) == 1 and len(right) == 2:
+            return _single_per_5_matches_total(left[0], right[0], right[1], m.volume)
+        if len(right) == 1 and len(left) == 2:
+            return _single_per_5_matches_total(right[0], left[0], left[1], d.volume)
+    except ValueError:
+        return False
+    return False
+
+
+def _single_per_5_matches_total(
+    single: str,
+    total: str,
+    total_volume: str,
+    parsed_volume: str,
+) -> bool:
+    if parsed_volume and _canonical_number(parsed_volume) != _canonical_number(total_volume):
+        return False
+    return abs((float(total) / float(total_volume)) - (float(single) / 5.0)) <= 0.01
 
 
 def _summed_combo_matches_single(left: list[str], right: list[str]) -> bool:
