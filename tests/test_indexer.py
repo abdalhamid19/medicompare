@@ -229,6 +229,28 @@ class DrugIndexTests(unittest.TestCase):
         self.assertEqual(score, 0.0)
         self.assertEqual(method, "no_match")
 
+    def test_brand_variants_find_descriptor_heavy_names(self) -> None:
+        tawreed = pd.DataFrame([
+            {
+                "product_name_ar": "بانادول كولد",
+                "product_name_en": "PANADOL COLD FLU DAY 24 F.C. TABS.",
+                "store_product_id": "T-cold",
+            },
+            {
+                "product_name_ar": "بريجناكير",
+                "product_name_en": "PREGNACARE ORIGINAL 30 CAPS",
+                "store_product_id": "T-preg",
+            },
+        ])
+        index = DrugIndex(tawreed, MatchingConfig(fuzzy_threshold=65))
+
+        record, _, method = index.best_match("PANADOL COLD AND FLU TAB")
+
+        self.assertIsNotNone(record)
+        assert record is not None
+        self.assertEqual(record["store_product_id"], "T-cold")
+        self.assertEqual(method, "component_index")
+
     def test_best_match_rejects_quantity_mismatch_even_when_brand_matches(self) -> None:
         index = make_index(threshold=65)
 

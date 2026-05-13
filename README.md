@@ -136,10 +136,13 @@ python run_tests.py
 | `--no-ai-preflight` | تعطيل اختبار صحة موديلات/مفاتيح AI قبل التشغيل | معطل |
 | `--ai-timeout` | مهلة اختبار كل model/key في preflight بالثواني | 10 |
 | `--ai-search-limit N` | أقصى عدد unmatched يدخل مرحلة AI search | بلا حد |
-| `--ai-search-policy` | توسيع AI search: `safe`, `expanded`, `aggressive` | safe |
+| `--ai-search-policy` | توسيع AI search: `safe`, `review-candidates`, `expanded`, `aggressive` | review-candidates |
 | `--ai-search-min-candidate-score` | أقل score للمرشح قبل إرساله للـ AI search | حسب policy |
 | `--ai-search-candidate-limit` | عدد candidates لكل استراتيجية بحث قبل AI search | حسب policy |
 | `--ai-search-accept-confidence` | أقل ثقة لقبول match ناتج من AI search | 0.75 |
+| `--ai-search-review-candidate-min-score` | أقل score لمرشح مرفوض خوارزميًا لكنه قابل للمراجعة بالـ AI | 68 |
+| `--ai-search-review-candidate-limit` | أقصى عدد review candidates لكل item | 8 |
+| `--ai-search-review-accept-confidence` | أقل ثقة لقبول مرشح به component mismatch قابل للمراجعة | 0.85 |
 | `--rotation-preflight-policy` | سياسة preflight للـ rotation: `smart`, `full`, `off` | smart |
 | `--rotation-preflight-budget` | أقصى عدد rotation attempts يختبرها smart preflight | 60 |
 | `--rotation-preflight-cache-ttl` | مدة إعادة استخدام آخر تقرير rotation health بالثواني | 21600 |
@@ -158,15 +161,16 @@ python test_opencode_models.py --mode both --timeout 20 --concurrency 4
 python run_matcher.py --provider rotation --trace --ai-search-limit 200
 ```
 
-مرحلة AI search لا ترسل كل `no_match` إلى النموذج. يتم إرسال الحالات التي لديها مرشحين أقوياء وآمنين فقط، مع الاحتفاظ بقواعد الرفض الخوارزمية مثل اختلاف الشكل أو الجرعة أو route أو imported/local.
+مرحلة AI search لا ترسل كل `no_match` إلى النموذج. الوضع الافتراضي `review-candidates` يرسل المرشحين الآمنين، ويضيف مرشحين مرفوضين خوارزميًا لأسباب قابلة للمراجعة مثل typo في brand أو اختلاف imported/local أو pack-size، لكن يقبلهم فقط بثقة أعلى. تبقى الاختلافات الخطرة مثل route أو age group أو form غير قابلة للإرسال.
 
 لزيادة عدد الحالات التي تدخل AI بدون فتحها عشوائياً:
 
 ```bash
 python run_matcher.py --provider rotation --trace --concurrency 4 \
   --ai-threshold 95 --ai-verify-policy fuzzy \
-  --ai-search-policy expanded --ai-search-min-candidate-score 75 \
-  --ai-search-candidate-limit 10 --ai-search-accept-confidence 0.75
+  --ai-search-policy review-candidates --ai-search-min-candidate-score 80 \
+  --ai-search-review-candidate-min-score 68 \
+  --ai-search-candidate-limit 8 --ai-search-review-accept-confidence 0.85
 ```
 
 في وضع `rotation`، يعتبر `.env` قائمة candidates فقط. يستخدم البرنامج

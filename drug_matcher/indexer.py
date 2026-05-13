@@ -48,9 +48,9 @@ class DrugIndex:
 
     def _build_brand_index(self):
         for i, parsed in enumerate(self._parsed):
-            brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
-            for plen in range(3, min(len(brand) + 1, 8)):
-                self._brand_index[brand[:plen]].append(i)
+            for brand in self._brand_keys(parsed):
+                for plen in range(3, min(len(brand) + 1, 8)):
+                    self._brand_index[brand[:plen]].append(i)
 
     def _build_component_index(self):
         for i, parsed in enumerate(self._parsed):
@@ -92,15 +92,17 @@ class DrugIndex:
     def _brand_lookup(
         self, parsed: DrugComponents, query_price=None,
     ) -> list[tuple[int, float]]:
-        brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
-        if len(brand) < 3:
+        brands = self._brand_keys(parsed)
+        if not brands:
             return []
         query_price = self._parse_price(query_price)
         hits = []
         seen = set()
-        for plen in range(min(len(brand), 7), 2, -1):
-            for idx in self._brand_index.get(brand[:plen], []):
-                if idx not in seen:
+        for brand in brands:
+            for plen in range(min(len(brand), 7), 2, -1):
+                for idx in self._brand_index.get(brand[:plen], []):
+                    if idx in seen:
+                        continue
                     seen.add(idx)
                     is_ok, _ = components_match(
                         parsed, self._parsed[idx],
@@ -114,19 +116,30 @@ class DrugIndex:
                         hits.append((idx, score))
         return hits
 
+    @staticmethod
+    def _brand_keys(parsed: DrugComponents) -> tuple[str, ...]:
+        keys = []
+        for brand in (parsed.brand, *parsed.brand_variants):
+            cleaned = re.sub(r"[^A-Z0-9]", "", brand)
+            if len(cleaned) >= 3 and cleaned not in keys:
+                keys.append(cleaned)
+        return tuple(keys)
+
     def _component_keys(self, parsed: DrugComponents) -> list[tuple]:
-        brand = re.sub(r"[^A-Z0-9]", "", parsed.brand)
-        if len(brand) < 3:
+        brands = self._brand_keys(parsed)
+        if not brands:
             return []
-        keys = [("brand", brand)]
-        if parsed.volume:
-            keys.append(("brand_volume", brand, parsed.volume))
-        if parsed.qty:
-            keys.append(("brand_qty", brand, parsed.qty))
-        if parsed.dosage_nums:
-            keys.append(("brand_dosage", brand, parsed.dosage_nums))
-        if parsed.flavor:
-            keys.append(("brand_flavor", brand, parsed.flavor))
+        keys = []
+        for brand in brands:
+            keys.append(("brand", brand))
+            if parsed.volume:
+                keys.append(("brand_volume", brand, parsed.volume))
+            if parsed.qty:
+                keys.append(("brand_qty", brand, parsed.qty))
+            if parsed.dosage_nums:
+                keys.append(("brand_dosage", brand, parsed.dosage_nums))
+            if parsed.flavor:
+                keys.append(("brand_flavor", brand, parsed.flavor))
         return keys
 
     def _component_lookup(

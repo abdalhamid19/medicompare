@@ -1,6 +1,7 @@
 """AI verification and search steps extracted from pipeline."""
 import asyncio
 import logging
+import re
 
 import pandas as pd
 from rapidfuzz import fuzz, process
@@ -15,6 +16,13 @@ logger = logging.getLogger("medicompare")
 
 _AI_SEARCH_ACCEPT_CONFIDENCE = 0.75
 _AI_REVIEW_OVERRIDE_CONFIDENCE = 0.75
+_DANGEROUS_REVIEW_REASONS = frozenset((
+    "different_age_group",
+    "different_form",
+    "different_route",
+    "different_weight",
+    "different_flavor",
+))
 _FUZZY_VERIFY_METHODS = frozenset((
     "token_set_ratio",
     "token_sort_ratio",
@@ -481,9 +489,13 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
         _trace_api_attempts(trace, results, row.name, parsed, ai_result)
         _trace_parse_failure(trace, results, row.name, parsed, ai_result)
     confidence = ai_result.get("confidence", 0) if ai_result else 0
+    accept_threshold, acceptance_reason = _search_acceptance_threshold(
+        ai_result, candidates, parsed, index, cfg,
+    )
     if (
         ai_result and ai_result.get("record")
-        and confidence >= cfg.ai_search_accept_confidence
+        and confidence >= accept_threshold
+        and acceptance_reason != "unsafe_component_mismatch"
     ):
         match_name = ai_result["record"]["product_name_en"]
         _apply_search_result(results, row.name, ai_result)
@@ -493,21 +505,23 @@ async def _try_search_one(verifier, results, index, row, cfg, trace):
                 True, match_name, confidence,
                 model_used=ai_result.get("model_used", ""),
                 api_failures=verifier.get_fallback_log(),
-                accept_threshold=cfg.ai_search_accept_confidence,
+                accept_threshold=accept_threshold,
                 row_index=row.name,
                 parse_failed=ai_result.get("parse_failed", False),
             )
         return 1
     if trace and trace.enabled:
         error_code = _search_error_code(
-            ai_result, confidence, cfg.ai_search_accept_confidence,
+            ai_result, confidence, accept_threshold,
         )
+        if acceptance_reason == "unsafe_component_mismatch":
+            error_code = acceptance_reason
         trace.log_ai_search_result(
             code, drug_name, norm, parsed.brand,
             False, None, confidence,
             model_used=ai_result.get("model_used", "") if ai_result else "",
             api_failures=verifier.get_fallback_log(),
-            accept_threshold=cfg.ai_search_accept_confidence,
+            accept_threshold=accept_threshold,
             row_index=row.name,
             error_code=error_code,
             parse_failed=ai_result.get("parse_failed", False) if ai_result else False,
@@ -549,49 +563,130 @@ def _search_candidates(parsed, norm, index, cfg, price=None):
     candidates = []
     limit = cfg.ai_search_candidate_limit
     for idx, score in index.get_candidates(parsed, limit=limit, price=price):
-        candidates.append((index.get_record(idx), score, idx))
+        _append_search_candidate(candidates, parsed, index, cfg, idx, score)
     for scorer in [fuzz.token_set_ratio, fuzz.token_sort_ratio]:
         results = process.extract(
             norm, index.norms,
             scorer=scorer, limit=limit,
         )
         for _, score, idx in results:
-            if score >= 70 and components_match(
-                parsed, index.get_parsed(idx),
-                cfg.brand_prefix_min,
-            )[0]:
-                candidates.append(
-                    (index.get_record(idx), score, idx),
-                )
+            if score >= cfg.ai_search_review_candidate_min_score:
+                _append_search_candidate(candidates, parsed, index, cfg, idx, score)
     brand_hits = index.lookup_by_brand(parsed)
     for rec, idx in brand_hits:
         score = index.score_candidate(norm, idx)
-        if score >= 65:
-            candidates.append((rec, score, idx))
+        if score >= cfg.ai_search_review_candidate_min_score:
+            _append_search_candidate(candidates, parsed, index, cfg, idx, score)
     return _dedupe_candidates(candidates)
 
 
 def _eligible_search_candidates(parsed, candidates, index, cfg):
     eligible = []
-    for rec, score, idx in candidates:
-        ok, _ = components_match(
-            parsed, index.get_parsed(idx),
-            cfg.brand_prefix_min,
-        )
+    review_count = 0
+    for candidate in candidates:
+        rec, score, idx = candidate[:3]
+        ok, reason = _candidate_component_status(candidate, parsed, index, cfg)
         if ok and score >= cfg.ai_search_min_candidate_score:
-            eligible.append((rec, score, idx))
+            eligible.append(candidate)
+        elif (
+            not ok
+            and
+            _review_candidates_enabled(cfg)
+            and score >= cfg.ai_search_review_candidate_min_score
+            and review_count < cfg.ai_search_review_candidate_limit
+            and _is_reviewable_component_mismatch(parsed, index.get_parsed(idx), reason, score, cfg)
+        ):
+            eligible.append(_with_candidate_reason(candidate, reason))
+            review_count += 1
     return eligible
 
 
 def _dedupe_candidates(candidates):
     seen = set()
     out = []
-    for rec, score, idx in candidates:
+    for candidate in candidates:
+        rec = candidate[0]
         sid = rec["store_product_id"]
         if sid not in seen:
             seen.add(sid)
-            out.append((rec, score, idx))
+            out.append(candidate)
     return out
+
+
+def _append_search_candidate(candidates, parsed, index, cfg, idx, score):
+    candidate = index.get_parsed(idx)
+    ok, reason = components_match(
+        parsed, candidate,
+        cfg.brand_prefix_min,
+    )
+    if ok or _is_reviewable_component_mismatch(parsed, candidate, reason, score, cfg):
+        candidates.append((index.get_record(idx), score, idx, reason))
+
+
+def _candidate_component_status(candidate, parsed, index, cfg):
+    reason = candidate[3] if len(candidate) > 3 else ""
+    if reason:
+        return reason == "ok", reason
+    return components_match(
+        parsed, index.get_parsed(candidate[2]),
+        cfg.brand_prefix_min,
+    )
+
+
+def _with_candidate_reason(candidate, reason):
+    if len(candidate) > 3:
+        return candidate
+    return (*candidate, reason)
+
+
+def _review_candidates_enabled(cfg) -> bool:
+    return cfg.ai_search_policy in {
+        "review-candidates", "expanded", "aggressive",
+    }
+
+
+def _is_reviewable_component_mismatch(parsed, candidate, reason, score, cfg) -> bool:
+    if reason == "ok":
+        return True
+    if reason in _DANGEROUS_REVIEW_REASONS:
+        return False
+    if reason not in cfg.ai_search_allow_component_mismatch_reasons:
+        return False
+    if reason == "different_brand":
+        return _brand_similarity(parsed.brand, candidate.brand) >= 80
+    if reason in {"different_quantity", "different_volume"}:
+        return _brand_similarity(parsed.brand, candidate.brand) >= 86
+    if reason == "different_modifier" and parsed.product_class == "medicine":
+        return score >= max(cfg.ai_search_review_candidate_min_score, 75)
+    return True
+
+
+def _brand_similarity(left: str, right: str) -> float:
+    left_clean = re.sub(r"[^A-Z0-9]", "", left)
+    right_clean = re.sub(r"[^A-Z0-9]", "", right)
+    if not left_clean or not right_clean:
+        return 0.0
+    if left_clean in right_clean or right_clean in left_clean:
+        return 100.0
+    return fuzz.ratio(left_clean, right_clean)
+
+
+def _search_acceptance_threshold(ai_result, candidates, parsed, index, cfg):
+    threshold = cfg.ai_search_accept_confidence
+    if not ai_result or not ai_result.get("record"):
+        return threshold, "no_record"
+    best_index = ai_result.get("best_index", 0)
+    if not isinstance(best_index, int) or best_index <= 0 or best_index > len(candidates):
+        return threshold, "invalid_best_index"
+    candidate = candidates[best_index - 1]
+    ok, reason = _candidate_component_status(candidate, parsed, index, cfg)
+    if ok:
+        return threshold, "ok"
+    if not _is_reviewable_component_mismatch(
+        parsed, index.get_parsed(candidate[2]), reason, candidate[1], cfg,
+    ):
+        return max(threshold, cfg.ai_search_review_accept_confidence), "unsafe_component_mismatch"
+    return max(threshold, cfg.ai_search_review_accept_confidence), reason
 
 
 def _apply_search_result(results, idx, ai_result):

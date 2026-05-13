@@ -43,10 +43,13 @@ def parse_args():
     parser.add_argument("--no-ai-preflight", action="store_true", help="Skip AI health preflight")
     parser.add_argument("--ai-timeout", type=float, default=10.0, help="AI preflight timeout in seconds")
     parser.add_argument("--ai-search-limit", type=int, default=None, help="Maximum unmatched rows to send through AI search")
-    parser.add_argument("--ai-search-policy", choices=["safe", "expanded", "aggressive"], default="safe", help="AI search expansion policy")
+    parser.add_argument("--ai-search-policy", choices=["safe", "review-candidates", "expanded", "aggressive"], default="review-candidates", help="AI search expansion policy")
     parser.add_argument("--ai-search-min-candidate-score", type=float, default=None, help="Minimum candidate score before AI search")
     parser.add_argument("--ai-search-accept-confidence", type=float, default=None, help="Minimum AI confidence to accept search match")
     parser.add_argument("--ai-search-candidate-limit", type=int, default=None, help="Candidate limit per search strategy before AI search")
+    parser.add_argument("--ai-search-review-candidate-min-score", type=float, default=None, help="Minimum review-candidate score before AI search")
+    parser.add_argument("--ai-search-review-accept-confidence", type=float, default=None, help="Minimum AI confidence to accept component-mismatch search matches")
+    parser.add_argument("--ai-search-review-candidate-limit", type=int, default=None, help="Maximum component-mismatch review candidates per item")
     parser.add_argument("--concurrency", type=int, default=None, help="Maximum concurrent AI requests and preflight checks")
     parser.add_argument("--rotation-preflight-policy", choices=["smart", "full", "off"], default="smart", help="Rotation preflight policy")
     parser.add_argument("--rotation-preflight-budget", type=int, default=60, help="Maximum rotation attempts to test in smart preflight")
@@ -61,6 +64,7 @@ def parse_args():
 def _search_policy_values(args):
     defaults = {
         "safe": (80.0, 0.75, 5),
+        "review-candidates": (80.0, 0.75, 8),
         "expanded": (75.0, 0.75, 10),
         "aggressive": (70.0, 0.75, 15),
     }
@@ -305,6 +309,18 @@ def main():
         ai_search_min_candidate_score=search_min_score,
         ai_search_accept_confidence=search_confidence,
         ai_search_candidate_limit=search_candidate_limit,
+        ai_search_review_candidate_min_score=(
+            args.ai_search_review_candidate_min_score
+            if args.ai_search_review_candidate_min_score is not None else 68.0
+        ),
+        ai_search_review_accept_confidence=(
+            args.ai_search_review_accept_confidence
+            if args.ai_search_review_accept_confidence is not None else 0.85
+        ),
+        ai_search_review_candidate_limit=(
+            args.ai_search_review_candidate_limit
+            if args.ai_search_review_candidate_limit is not None else 8
+        ),
     )
 
     if args.provider == "rotation":

@@ -45,6 +45,24 @@ class NormalizerTests(unittest.TestCase):
         self.assertTrue(comp.imported)
         self.assertEqual(comp.normalized, "AUGMENTIN 625 MG 10 TABS")
 
+    def test_parse_drug_builds_brand_variants_for_descriptors(self) -> None:
+        comp = parse_drug("+***imp PANADOL COLD AND FLU TAB")
+
+        self.assertEqual(comp.brand, "PANADOL")
+        self.assertIn("PANADOL", comp.brand_variants)
+        self.assertIn("PANADOLCOLD", comp.brand_variants)
+
+    def test_parse_drug_classifies_non_medicine_products(self) -> None:
+        cases = [
+            ("DERMA ACTIVE BODY MILK 200 ML", "cosmetic"),
+            ("CERELAC WHEAT AND MILK 125 GM", "baby_food"),
+            ("DUREX REAL FEEL 3 CONDOMS", "device"),
+            ("BIOTIN 10000 MCG 100 TAB", "supplement"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw):
+                self.assertEqual(parse_drug(raw).product_class, expected)
+
     def test_parse_drug_detects_compact_import_prefix(self) -> None:
         comp = parse_drug("+***IMPGlUCOSAMINE CHONDROTN MSM 120CAP")
 
@@ -109,6 +127,8 @@ class NormalizerTests(unittest.TestCase):
             ("AMIKACIN 500MG VIAL", "AMIKACIN AMOUN 500 MG / 2 ML VIAL"),
             ("ASPOCID INF 30TAB", "ASPOCID PAEDIATRIC 75 MG 30 CHEWABLE TAB"),
             ("CEFTRIAXONE 1 GM I.M. VIAL", "CEFTRIAXONE 1 GM I.M / I.V VIAL"),
+            ("AUGMENTIN DUO 200/28 MG/5 ML SUSP", "AUGMENTIN DUO 228 MG / 5 ML SUSP"),
+            ("DOSTINEX .5 MG 2TAB", "DOSTINEX 0.5 MG 2 TAB"),
         ]
         for left, right in cases:
             with self.subTest(left=left, right=right):

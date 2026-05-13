@@ -4,6 +4,9 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz
 
+CONNECTOR_WORDS = frozenset({
+    "AND", "WITH", "OF", "THE",
+})
 FORM_WORDS = frozenset({
     "TABLET", "TABLETS", "TAB", "TABS", "CAP", "CAPS", "CAPSULE", "CAPSULES",
     "SACHET", "SACHETS", "SACH", "AMP", "AMPS", "AMPOULE", "AMPOULES", "VIAL", "VIALS",
@@ -31,6 +34,11 @@ NOISE_WORDS = frozenset({
     "BLUE", "RED", "WHITE", "ORS", "FLAVOR", "FLAVOUR",
     "LIQUID", "FACIAL",
 })
+SOFT_BRAND_DESCRIPTORS = frozenset({
+    "ACTIVE", "ADULT", "ADULTS", "ANISE", "COLD", "FLU", "FOLIC",
+    "JOINT", "NIGHT", "ORIGINAL", "SINUS", "TOP", "TRIPLE", "VAG",
+    "VAGINAL",
+})
 BRAND_QUALIFIERS = frozenset({
     "INFINITY", "SURACTIVE", "ALKALINE", "ESOMEPRAZOLE",
     "OPHTALMIC", "HAIR", "GROWTH", "CAFFEINE", "RICH",
@@ -48,6 +56,26 @@ VITAMIN_MODIFIERS = frozenset({
 CRITICAL_MODIFIERS = frozenset({
     "PLUS", "EXTRA", "ADVANCE", "FORTE", "NIGHT", "COLD",
     "SINUS", "D",
+})
+COSMETIC_WORDS = frozenset({
+    "BODY", "CONCEALER", "COSMETIC", "CREAM", "DEODORANT", "DOUCHE",
+    "EMULGEL", "GEL", "HAIR", "LOTION", "MASK", "MOUTH", "MOUTHWASH",
+    "OIL", "SERUM", "SHAMPOO", "SOAP", "SPRAY", "SUN", "TONER",
+    "WASH",
+})
+DEVICE_WORDS = frozenset({
+    "BANDAGE", "CANULA", "CONDOM", "CONDOMS", "LANCET", "LANCETS",
+    "NEBULIZER", "NEEDLE", "NEEDLES", "PATCH", "PATCHES", "STRIP",
+    "STRIPS", "SYRINGE", "SYRINGES",
+})
+BABY_FOOD_WORDS = frozenset({
+    "APTAMIL", "BEBELAC", "BEBEJUNIOR", "CERELAC", "FEH", "HERO",
+    "MILK", "NAN", "NIDO", "S26",
+})
+SUPPLEMENT_WORDS = frozenset({
+    "ASHWAGANDHA", "BIOTIN", "CALCIUM", "CENTRUM", "COLLAGEN", "D3",
+    "FEROGLOBIN", "GLUCOSAMINE", "OMEGA", "PERFECTIL", "PREGNACARE",
+    "VITAMIN", "VITAMINS", "ZINC",
 })
 OCULAR_FORMS = frozenset({"OPHTALMIC", "EYE", "DROPS", "SOLUTION"})
 LIQUID_FORMS = frozenset({"SYRUP", "SUSP", "SOLUTION", "ORL"})
@@ -81,6 +109,8 @@ class DrugComponents:
     flavor: str
     imported: bool
     normalized: str
+    brand_variants: tuple[str, ...] = ()
+    product_class: str = "medicine"
 
 _DOSAGE_RE = re.compile(
     r"(\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?(?:\s\d{3})?)"
@@ -89,6 +119,11 @@ _DOSAGE_RE = re.compile(
 )
 _MG_PER_ML_RE = re.compile(
     r"(\d+(?:\.\d+)?)\s*MG\s*/\s*(\d+(?:\.\d+)?)\s*ML",
+    re.IGNORECASE,
+)
+_COMBO_MG_PER_ML_RE = re.compile(
+    r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)\s*MG\s*/\s*"
+    r"(\d+(?:\.\d+)?)\s*ML",
     re.IGNORECASE,
 )
 _WEIGHT_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(GM|G)\b", re.IGNORECASE)
@@ -126,8 +161,10 @@ def normalize(name: str) -> str:
         return ""
     name = name.strip().upper()
     name = _NOISE_PREFIX_RE.sub("", name)
+    name = name.replace("_", " ").replace("\\", " / ")
     name = re.sub(r"-+", " ", name)
     name = re.sub(r"[()]", " ", name)
+    name = re.sub(r"(?<=\d)O(?=\d)", "0", name)
     name = re.sub(r"\bFORET\b", "FORTE", name)
     name = re.sub(r"\b(SYRP|SYP)\b", "SYRUP", name)
     name = name.replace("*", " / ")
@@ -144,6 +181,7 @@ def normalize(name: str) -> str:
     name = re.sub(r"\s*[\\/]\s*", " / ", name)
     # Handle European decimal notation BEFORE removing dots: "1.000" IU means 1000
     name = re.sub(r'(\d)\.(\d{3})\s*(I\.?U\.?|IU|MCG|MG)', r'\1\2 \3', name)
+    name = re.sub(r'(?<!\d)\.(\d+)', r'0.\1', name)
     # Remove dots but NOT between digits that form a decimal (e.g. 0.5, 2.5)
     name = re.sub(r'\.(?!\d)', ' ', name)
     name = re.sub(r'(?<!\d)\.', ' ', name)
@@ -158,9 +196,13 @@ def parse_drug(name: str) -> DrugComponents:
     norm = normalize(name)
 
     # Dosage (MG, MCG, IU, %) - NOT GM/G (those are weight/packaging)
+    combo_mg_per_ml = _COMBO_MG_PER_ML_RE.search(norm)
     mg_per_ml = _MG_PER_ML_RE.search(norm)
-    if mg_per_ml:
-        dosage_nums = (f"{mg_per_ml.group(1)}/{mg_per_ml.group(2)}",)
+    if combo_mg_per_ml:
+        dosage_nums = (f"{combo_mg_per_ml.group(1)}/{combo_mg_per_ml.group(2)}",)
+        dosage_units = ("MG/ML",)
+    elif mg_per_ml:
+        dosage_nums = (mg_per_ml.group(1),)
         dosage_units = ("MG/ML",)
     else:
         d_matches = _DOSAGE_RE.findall(norm)
@@ -190,11 +232,7 @@ def parse_drug(name: str) -> DrugComponents:
         for idx, w in enumerate(words):
             if re.search(r"\d", w):
                 break
-            if (
-                w in FORM_PREFIXES or w in FORM_WORDS
-                or w in NOISE_WORDS or w in BRAND_QUALIFIERS
-                or _is_pediatric_inf(words, idx)
-            ):
+            if _is_brand_boundary(words, idx):
                 break
             brand_words.append(w)
         brand = "".join(brand_words)
@@ -203,10 +241,7 @@ def parse_drug(name: str) -> DrugComponents:
             w for idx, w in enumerate(words[1:], start=1)
             if (
                 not re.search(r"\d", w)
-                and w not in FORM_PREFIXES
-                and w not in FORM_WORDS
-                and w not in NOISE_WORDS
-                and w not in BRAND_QUALIFIERS
+                and not _is_brand_boundary(words, idx)
                 and not _is_pediatric_inf(words, idx)
             )
         )
@@ -229,6 +264,8 @@ def parse_drug(name: str) -> DrugComponents:
             flavor = fw
             break
 
+    product_class = classify_product(norm)
+    variants = brand_variants_from_words(words, brand)
     return DrugComponents(
         brand=brand,
         dosage_nums=dosage_nums,
@@ -240,6 +277,8 @@ def parse_drug(name: str) -> DrugComponents:
         flavor=flavor,
         imported=imported,
         normalized=norm,
+        brand_variants=variants,
+        product_class=product_class,
     )
 
 
@@ -259,6 +298,63 @@ def _canonical_form(word: str) -> str:
     if word in {"SYRP", "SYP"}:
         return "SYRUP"
     return word
+
+
+def _is_brand_boundary(words: list[str], idx: int) -> bool:
+    word = words[idx]
+    if (
+        word in FORM_PREFIXES or word in FORM_WORDS
+        or word in NOISE_WORDS or word in BRAND_QUALIFIERS
+        or _is_pediatric_inf(words, idx)
+    ):
+        return True
+    return idx > 0 and (
+        word in SOFT_BRAND_DESCRIPTORS or word in CONNECTOR_WORDS
+    )
+
+
+def classify_product(norm: str) -> str:
+    words = set(norm.split())
+    if words & DEVICE_WORDS:
+        return "device"
+    if words & BABY_FOOD_WORDS and not words & {"BODY", "CREAM", "LOTION"}:
+        return "baby_food"
+    if words & COSMETIC_WORDS:
+        return "cosmetic"
+    if words & SUPPLEMENT_WORDS:
+        return "supplement"
+    return "medicine"
+
+
+def brand_variants_from_words(
+    words: list[str],
+    primary_brand: str,
+) -> tuple[str, ...]:
+    variants: list[str] = []
+
+    def add(value: str):
+        cleaned = re.sub(r"[^A-Z0-9]", "", value)
+        if len(cleaned) >= 3 and cleaned not in variants:
+            variants.append(cleaned)
+
+    add(primary_brand)
+    prefix: list[str] = []
+    for idx, word in enumerate(words):
+        if re.search(r"\d", word):
+            break
+        if word in FORM_PREFIXES or word in FORM_WORDS or word in NOISE_WORDS:
+            break
+        if _is_pediatric_inf(words, idx):
+            break
+        if idx > 0 and word in CONNECTOR_WORDS:
+            continue
+        if idx > 0 and word in BRAND_QUALIFIERS:
+            break
+        prefix.append(word)
+        add("".join(prefix))
+        if idx > 0 and word in SOFT_BRAND_DESCRIPTORS:
+            break
+    return tuple(variants)
 
 
 def _dosage_parts(nums: tuple[str, ...]) -> list[str]:
@@ -318,6 +414,8 @@ def _dosage_compatible(d: DrugComponents, m: DrugComponents) -> bool:
     m_parts = _dosage_parts(m.dosage_nums)
     if tuple(sorted(d_parts, key=float)) == tuple(sorted(m_parts, key=float)):
         return True
+    if _summed_combo_matches_single(d_parts, m_parts):
+        return True
     forms = {d.form, m.form}
     if not forms & LIQUID_DOSE_FORMS:
         return False
@@ -325,6 +423,21 @@ def _dosage_compatible(d: DrugComponents, m: DrugComponents) -> bool:
         return True
     if len(m_parts) == 1 and len(d_parts) > 1 and m_parts[0] == d_parts[0]:
         return True
+    return False
+
+
+def _summed_combo_matches_single(left: list[str], right: list[str]) -> bool:
+    if len(left) <= 1 and len(right) <= 1:
+        return False
+    try:
+        left_vals = [float(v) for v in left]
+        right_vals = [float(v) for v in right]
+    except ValueError:
+        return False
+    if len(left_vals) > 1 and len(right_vals) == 1:
+        return abs(sum(left_vals) - right_vals[0]) <= 0.01
+    if len(right_vals) > 1 and len(left_vals) == 1:
+        return abs(sum(right_vals) - left_vals[0]) <= 0.01
     return False
 
 

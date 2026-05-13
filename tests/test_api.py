@@ -18,7 +18,7 @@ MODELS = [
 ]
 
 
-async def test_one(cfg: APIConfig) -> dict:
+async def run_one_api_test(cfg: APIConfig) -> dict:
     """Test a single API call."""
     async with AIVerifier(cfg) as v:
         result = await v.verify_one(
@@ -53,7 +53,7 @@ def main():
         )
         print(f"Testing {model} ...", end=" ", flush=True)
         try:
-            result = asyncio.run(test_one(cfg))
+            result = asyncio.run(run_one_api_test(cfg))
             reason = result.get("reason", "")
             conf = result.get("confidence", 0)
             correct = result.get("is_correct", False)

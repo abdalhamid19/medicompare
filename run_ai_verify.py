@@ -27,16 +27,20 @@ def parse_args():
     parser.add_argument("--api-key", default=None, help="API key (overrides .env)")
     parser.add_argument("--review-model", default=None, help="Second AI model for cross-review (e.g. big-pickle)")
     parser.add_argument("--review-threshold", type=float, default=None, help="Review AI decisions with confidence below this (default: 1.0)")
-    parser.add_argument("--ai-search-policy", choices=["safe", "expanded", "aggressive"], default="safe", help="AI search expansion policy")
+    parser.add_argument("--ai-search-policy", choices=["safe", "review-candidates", "expanded", "aggressive"], default="review-candidates", help="AI search expansion policy")
     parser.add_argument("--ai-search-min-candidate-score", type=float, default=None, help="Minimum candidate score before AI search")
     parser.add_argument("--ai-search-accept-confidence", type=float, default=None, help="Minimum AI confidence to accept search match")
     parser.add_argument("--ai-search-candidate-limit", type=int, default=None, help="Candidate limit per search strategy before AI search")
+    parser.add_argument("--ai-search-review-candidate-min-score", type=float, default=None, help="Minimum review-candidate score before AI search")
+    parser.add_argument("--ai-search-review-accept-confidence", type=float, default=None, help="Minimum AI confidence to accept component-mismatch search matches")
+    parser.add_argument("--ai-search-review-candidate-limit", type=int, default=None, help="Maximum component-mismatch review candidates per item")
     return parser.parse_args()
 
 
 def _search_policy_values(args):
     defaults = {
         "safe": (80.0, 0.75, 5),
+        "review-candidates": (80.0, 0.75, 8),
         "expanded": (75.0, 0.75, 10),
         "aggressive": (70.0, 0.75, 15),
     }
@@ -73,6 +77,18 @@ async def main():
         ai_search_min_candidate_score=search_min_score,
         ai_search_accept_confidence=search_confidence,
         ai_search_candidate_limit=search_candidate_limit,
+        ai_search_review_candidate_min_score=(
+            args.ai_search_review_candidate_min_score
+            if args.ai_search_review_candidate_min_score is not None else 68.0
+        ),
+        ai_search_review_accept_confidence=(
+            args.ai_search_review_accept_confidence
+            if args.ai_search_review_accept_confidence is not None else 0.85
+        ),
+        ai_search_review_candidate_limit=(
+            args.ai_search_review_candidate_limit
+            if args.ai_search_review_candidate_limit is not None else 8
+        ),
     )
     resolved = resolve_api_config(
         provider=args.provider or "",

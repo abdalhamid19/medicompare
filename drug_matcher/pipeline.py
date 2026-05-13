@@ -3,6 +3,7 @@ import logging
 import re
 
 import pandas as pd
+from rapidfuzz import fuzz
 
 from .config import MatchingConfig, APIConfig, Paths, load_env
 from .normalizer import parse_drug, components_match
@@ -298,10 +299,33 @@ class MatchPipeline:
             and m_brand not in d_brand
         )
         if not is_ok:
+            if self._cleanup_mismatch_is_tolerable(d_comp, m_comp, reason):
+                return ""
             return reason
         if brand_mismatch:
+            if self._cleanup_brand_typo_is_tolerable(d_comp, m_comp):
+                return ""
             return "brand_prefix_mismatch"
         return ""
+
+    def _cleanup_mismatch_is_tolerable(self, d_comp, m_comp, reason: str) -> bool:
+        if reason not in {"different_brand", "brand_prefix_mismatch"}:
+            return False
+        return self._cleanup_brand_typo_is_tolerable(d_comp, m_comp)
+
+    def _cleanup_brand_typo_is_tolerable(self, d_comp, m_comp) -> bool:
+        d_brand = re.sub(r"[^A-Z0-9]", "", d_comp.brand)
+        m_brand = re.sub(r"[^A-Z0-9]", "", m_comp.brand)
+        if not d_brand or not m_brand:
+            return False
+        if fuzz.ratio(d_brand, m_brand) < 84:
+            return False
+        unsafe_checks = (
+            (d_comp.dosage_nums and m_comp.dosage_nums and d_comp.dosage_nums != m_comp.dosage_nums),
+            (d_comp.form and m_comp.form and d_comp.form != m_comp.form),
+            (d_comp.qty and m_comp.qty and d_comp.qty != m_comp.qty),
+        )
+        return not any(unsafe_checks)
 
     def _nan_out_row(self, idx):
         for col in _RESULT_COLS[2:6]:

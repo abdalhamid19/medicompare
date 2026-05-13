@@ -15,6 +15,7 @@ from drug_matcher.ai_steps import (
     _get_unmatched,
     _search_candidates,
     _eligible_search_candidates,
+    _search_acceptance_threshold,
     _dedupe_candidates,
     _apply_correction,
     _apply_search_result,
@@ -24,6 +25,7 @@ from drug_matcher.ai_steps import (
 )
 from drug_matcher.config import MatchingConfig, APIConfig
 from drug_matcher.indexer import DrugIndex
+from drug_matcher.normalizer import parse_drug
 from drug_matcher.trace_log import MatchTraceLog
 
 
@@ -832,6 +834,45 @@ class TestAiSearchEligibility(unittest.TestCase):
         )
 
         self.assertEqual(len(eligible), 1)
+
+    def test_review_policy_keeps_reviewable_import_mismatch(self):
+        tawreed = pd.DataFrame([
+            {
+                "product_name_ar": "بانادول اكسترا",
+                "product_name_en": "PANADOL EXTRA 24 TAB",
+                "store_product_id": "T-1",
+            },
+        ])
+        index = DrugIndex(tawreed, MatchingConfig())
+        parsed = index.get_parsed(0)
+        inventory = parse_drug("PANADOL EXTRA 24 TAB IMP")
+        candidates = [(index.get_record(0), 95.0, 0, "different_import_status")]
+
+        eligible = _eligible_search_candidates(
+            inventory, candidates, index, MatchingConfig(),
+        )
+
+        self.assertEqual(len(eligible), 1)
+
+    def test_review_candidate_acceptance_requires_higher_confidence(self):
+        tawreed = pd.DataFrame([
+            {
+                "product_name_ar": "ادماليز",
+                "product_name_en": "AMYLASE SYRUP 90 ML",
+                "store_product_id": "T-1",
+            },
+        ])
+        index = DrugIndex(tawreed, MatchingConfig())
+        parsed = parse_drug("ADMLASE SYRUP 120 ML")
+        candidates = [(index.get_record(0), 82.0, 0, "different_brand")]
+        ai_result = {"record": index.get_record(0), "best_index": 1}
+
+        threshold, reason = _search_acceptance_threshold(
+            ai_result, candidates, parsed, index, MatchingConfig(),
+        )
+
+        self.assertEqual(reason, "different_brand")
+        self.assertEqual(threshold, 0.85)
 
     def test_search_candidate_limit_expands_candidates(self):
         index = _make_index()

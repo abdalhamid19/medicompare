@@ -9,7 +9,7 @@ from drug_matcher.ai_health import (
     extract_quota_headers,
     healthy_combos,
     reset_in_text,
-    test_one,
+    test_one as health_test_one,
     validate_model_json,
 )
 
@@ -54,7 +54,7 @@ class AIHealthTests(unittest.TestCase):
         })
         payload = json.dumps({"choices": [{"message": {"content": content}}]})
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _FakeSession(200, payload),
                 AIKey("KEY_1", "sk-test123456"),
                 "model-ok",
@@ -71,7 +71,7 @@ class AIHealthTests(unittest.TestCase):
     def test_unsupported_model_is_not_ok(self):
         payload = '{"type":"error","error":{"message":"Model not supported"}}'
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _FakeSession(401, payload),
                 AIKey("KEY_1", "sk-test123456"),
                 "bad-model",
@@ -87,7 +87,7 @@ class AIHealthTests(unittest.TestCase):
     def test_rate_limit_is_not_ok(self):
         payload = '{"type":"error","error":{"type":"FreeUsageLimitError"}}'
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _FakeSession(429, payload, {"retry-after": "3600"}),
                 AIKey("KEY_1", "sk-test123456"),
                 "rate-limited",
@@ -106,7 +106,7 @@ class AIHealthTests(unittest.TestCase):
     def test_invalid_json_content_is_not_ok(self):
         payload = json.dumps({"choices": [{"message": {"content": "not json"}}]})
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _FakeSession(200, payload),
                 AIKey("KEY_1", "sk-test123456"),
                 "bad-json",
@@ -121,7 +121,7 @@ class AIHealthTests(unittest.TestCase):
 
     def test_timeout_is_not_ok(self):
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _TimeoutSession(),
                 AIKey("KEY_1", "sk-test123456"),
                 "slow-model",
@@ -168,7 +168,7 @@ class AIHealthTests(unittest.TestCase):
         }
 
         result = asyncio.run(
-            test_one(
+            health_test_one(
                 _FakeSession(200, payload, headers),
                 AIKey("KEY_1", "sk-test123456"),
                 "model-ok",
